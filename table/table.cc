@@ -37,22 +37,23 @@ struct Table::Rep {
 
 Status Table::Open(const Options& options, RandomAccessFile* file,
                    uint64_t size, Table** table) {
+          
   *table = nullptr;
   if (size < Footer::kEncodedLength) {
     return Status::Corruption("file is too short to be an sstable");
   }
 
+  /// 1.首先读取 footer
   char footer_space[Footer::kEncodedLength];
   Slice footer_input;
   Status s = file->Read(size - Footer::kEncodedLength, Footer::kEncodedLength,
                         &footer_input, footer_space);
   if (!s.ok()) return s;
-
   Footer footer;
   s = footer.DecodeFrom(&footer_input);
   if (!s.ok()) return s;
 
-  // Read the index block
+  // 2 Read the index block
   BlockContents index_block_contents;
   ReadOptions opt;
   if (options.paranoid_checks) {
@@ -60,6 +61,7 @@ Status Table::Open(const Options& options, RandomAccessFile* file,
   }
   s = ReadBlock(file, opt, footer.index_handle(), &index_block_contents);
 
+  /// 3. 读取 metaindex block ，再读取 meta block（filter block）
   if (s.ok()) {
     // We've successfully read the footer and the index block: we're
     // ready to serve requests.
@@ -67,12 +69,15 @@ Status Table::Open(const Options& options, RandomAccessFile* file,
     Rep* rep = new Table::Rep;
     rep->options = options;
     rep->file = file;
+    // 3-1. 从footer的 metaindex handle，并读取 metaIndex block
     rep->metaindex_handle = footer.metaindex_handle();
     rep->index_block = index_block;
     rep->cache_id = (options.block_cache ? options.block_cache->NewId() : 0);
     rep->filter_data = nullptr;
     rep->filter = nullptr;
     *table = new Table(rep);
+
+    // 3-2 读取metaindex block
     (*table)->ReadMeta(footer);
   }
 
@@ -90,11 +95,15 @@ void Table::ReadMeta(const Footer& footer) {
   if (rep_->options.paranoid_checks) {
     opt.verify_checksums = true;
   }
+  /// 1.调用ReadBlock读取metaIndex block的内容
   BlockContents contents;
   if (!ReadBlock(rep_->file, opt, footer.metaindex_handle(), &contents).ok()) {
     // Do not propagate errors since meta info is not needed for operation
-    return;
+    return; // 失败了也没报错，因为没有meta信息也没关系
   }
+
+  /// 2.根据读取的BlockContent构建 metaIndex block 的 Block对象，
+  /// 找到指定的filter；如果找到了就调用ReadFilter构建filter对象。
   Block* meta = new Block(contents);
 
   Iterator* iter = meta->NewIterator(BytewiseComparator());
@@ -108,7 +117,9 @@ void Table::ReadMeta(const Footer& footer) {
   delete meta;
 }
 
+// 根据指定的blockHandle，读取filter
 void Table::ReadFilter(const Slice& filter_handle_value) {
+  /// 1. 从传入的filter_handle_value解析出 BlockHandle
   Slice v = filter_handle_value;
   BlockHandle filter_handle;
   if (!filter_handle.DecodeFrom(&v).ok()) {
@@ -117,6 +128,9 @@ void Table::ReadFilter(const Slice& filter_handle_value) {
 
   // We might want to unify with ReadBlock() if we start
   // requiring checksum verification in Table::Open.
+  // 根据解析出的位置读取filter内容，ReadBlock。如果block的heap_allocated为true，
+  // 表明需要自行释放内存，因此要把指针保存在filter_data中。
+  // 最后根据读取的data创建FilterBlockReader对象
   ReadOptions opt;
   if (rep_->options.paranoid_checks) {
     opt.verify_checksums = true;

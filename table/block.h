@@ -15,6 +15,8 @@ namespace leveldb {
 struct BlockContents;
 class Comparator;
 
+
+// l1nkkk: 与 memtable 读取都是交给 iteration，屏蔽细节
 class Block {
  public:
   // Initialize the block with the specified contents.
@@ -33,8 +35,8 @@ class Block {
 
   uint32_t NumRestarts() const;
 
-  const char* data_;
-  size_t size_;
+  const char* data_;         // block
+  size_t size_;              // block数据大小
   uint32_t restart_offset_;  // Offset in data_ of restart array
   bool owned_;               // Block owns data_[]
 };

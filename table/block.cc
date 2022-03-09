@@ -52,6 +52,8 @@ Block::~Block() {
 //
 // If any errors are detected, returns nullptr.  Otherwise, returns a
 // pointer to the key delta (just past the three decoded values).
+// 从[p,limit)中解析出一条entry，shared、non_shared、value_length都是输出参数，
+// 最后返回key_delta的索引。
 static inline const char* DecodeEntry(const char* p, const char* limit,
                                       uint32_t* shared, uint32_t* non_shared,
                                       uint32_t* value_length) {
@@ -74,34 +76,39 @@ static inline const char* DecodeEntry(const char* p, const char* limit,
   return p;
 }
 
+// 块迭代器
 class Block::Iter : public Iterator {
  private:
-  const Comparator* const comparator_;
+  const Comparator* const comparator_;  // 比较器
   const char* const data_;       // underlying block contents
   uint32_t const restarts_;      // Offset of restart array (list of fixed32)
   uint32_t const num_restarts_;  // Number of uint32_t entries in restart array
 
   // current_ is offset in data_ of current entry.  >= restarts_ if !Valid
-  uint32_t current_;
+  uint32_t current_;        // 当前 entry 在data_[]中的offset
   uint32_t restart_index_;  // Index of restart block in which current_ falls
-  std::string key_;
-  Slice value_;
+  std::string key_;         // 当前的key
+  Slice value_;             // 当前的value
   Status status_;
 
+  // 比较两个Slice
   inline int Compare(const Slice& a, const Slice& b) const {
     return comparator_->Compare(a, b);
   }
 
   // Return the offset in data_ just past the end of the current entry.
+  // 获取下一个 entry 的 offset
   inline uint32_t NextEntryOffset() const {
     return (value_.data() + value_.size()) - data_;
   }
 
+  // 获取 第index个重启点的 offset
   uint32_t GetRestartPoint(uint32_t index) {
     assert(index < num_restarts_);
     return DecodeFixed32(data_ + restarts_ + index * sizeof(uint32_t));
   }
 
+  // Seek 到第index个RestartPoint，需要调用 ParseNextKey() 才能获取到第一条数据
   void SeekToRestartPoint(uint32_t index) {
     key_.clear();
     restart_index_ = index;
@@ -140,10 +147,12 @@ class Block::Iter : public Iterator {
     ParseNextKey();
   }
 
+  // l1nkkk: 可见 prev 读效率比Next低
   void Prev() override {
     assert(Valid());
 
     // Scan backwards to a restart point before current_
+    /// 1. 判断是否当前已经到了restart_point, 如果是，需要调整 restart_index_
     const uint32_t original = current_;
     while (GetRestartPoint(restart_index_) >= original) {
       if (restart_index_ == 0) {
@@ -155,6 +164,9 @@ class Block::Iter : public Iterator {
       restart_index_--;
     }
 
+
+    /// 2.根据restart index定位到重启点的k/v对，
+    /// 从重启点位置开始向后遍历，直到遇到original前面的那个k/v对
     SeekToRestartPoint(restart_index_);
     do {
       // Loop until end of current entry hits the start of original entry
@@ -164,6 +176,8 @@ class Block::Iter : public Iterator {
   void Seek(const Slice& target) override {
     // Binary search in restart array to find the last restart point
     // with a key < target
+
+    /// 1. 在RestartPoint中二分查找
     uint32_t left = 0;
     uint32_t right = num_restarts_ - 1;
     int current_key_compare = 0;
@@ -212,6 +226,9 @@ class Block::Iter : public Iterator {
     // and is after than the current key.
     assert(current_key_compare == 0 || Valid());
     bool skip_seek = left == restart_index_ && current_key_compare < 0;
+
+    
+    /// 3. 在定位到的 Restartport 中线性查找
     if (!skip_seek) {
       SeekToRestartPoint(left);
     }
@@ -226,11 +243,13 @@ class Block::Iter : public Iterator {
     }
   }
 
+  // 定位到第一个entry
   void SeekToFirst() override {
     SeekToRestartPoint(0);
     ParseNextKey();
   }
 
+  // 定位到最后一个 entry
   void SeekToLast() override {
     SeekToRestartPoint(num_restarts_ - 1);
     while (ParseNextKey() && NextEntryOffset() < restarts_) {
@@ -247,7 +266,10 @@ class Block::Iter : public Iterator {
     value_.clear();
   }
 
+  // 解析下一个entry，并更新状态
   bool ParseNextKey() {
+    /// 1. 调到下一个entry的index，并进行是否到尾部的判断
+    // 下一个 entry 的index
     current_ = NextEntryOffset();
     const char* p = data_ + current_;
     const char* limit = data_ + restarts_;  // Restarts come right after data
@@ -258,6 +280,8 @@ class Block::Iter : public Iterator {
       return false;
     }
 
+
+    /// 2. 解析entry，并设置当前iter状态
     // Decode next entry
     uint32_t shared, non_shared, value_length;
     p = DecodeEntry(p, limit, &shared, &non_shared, &value_length);

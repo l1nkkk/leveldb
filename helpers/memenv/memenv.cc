@@ -73,6 +73,8 @@ class FileState {
     if (offset > size_) {
       return Status::IOError("Offset greater than file size.");
     }
+
+    // available：从 offset 开始 剩余刻度的字节数
     const uint64_t available = size_ - offset;
     if (n > available) {
       n = static_cast<size_t>(available);
@@ -146,6 +148,8 @@ class FileState {
 
   mutable port::Mutex blocks_mutex_;
   std::vector<char*> blocks_ GUARDED_BY(blocks_mutex_);
+
+  // file size
   uint64_t size_ GUARDED_BY(blocks_mutex_);
 };
 

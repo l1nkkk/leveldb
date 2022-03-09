@@ -49,12 +49,17 @@ class LEVELDB_EXPORT TableBuilder {
   // Add key,value to the table being constructed.
   // REQUIRES: key is after any previously added key according to comparator.
   // REQUIRES: Finish(), Abandon() have not been called
+  // 
+  // 向当前正在构建的表添加新的{key, value}对，
+  // 要求根据Option指定的Comparator，key必须位于所有前面添加的key之后
   void Add(const Slice& key, const Slice& value);
 
   // Advanced operation: flush any buffered key/value pairs to file.
   // Can be used to ensure that two adjacent entries never live in
   // the same data block.  Most clients should not need to use this method.
   // REQUIRES: Finish(), Abandon() have not been called
+  // 
+  // 将当前缓存的k/v全部flush到文件中，一个高级方法，大部分的client不需要直接调用该方法
   void Flush();
 
   // Return non-ok iff some error has been detected.
@@ -63,6 +68,7 @@ class LEVELDB_EXPORT TableBuilder {
   // Finish building the table.  Stops using the file passed to the
   // constructor after this function returns.
   // REQUIRES: Finish(), Abandon() have not been called
+  // 结束表的构建，该方法被调用后，将不再会使用传入的WritableFile
   Status Finish();
 
   // Indicate that the contents of this builder should be abandoned.  Stops
@@ -70,6 +76,8 @@ class LEVELDB_EXPORT TableBuilder {
   // If the caller is not going to call Finish(), it must call Abandon()
   // before destroying this builder.
   // REQUIRES: Finish(), Abandon() have not been called
+  // 结束表的构建，并丢弃当前缓存的内容，该方法被调用后，
+  // 将不再会使用传入的WritableFile；【只是设置closed为true，无其他操作】
   void Abandon();
 
   // Number of calls to Add() so far.
@@ -77,11 +85,14 @@ class LEVELDB_EXPORT TableBuilder {
 
   // Size of the file generated so far.  If invoked after a successful
   // Finish() call, returns the size of the final generated file.
+  // 返回当前已经 Flush 的Block 的大小，如果Finish()了，则返回SStable大小
   uint64_t FileSize() const;
 
  private:
   bool ok() const { return status().ok(); }
+  // writeblock 预处理
   void WriteBlock(BlockBuilder* block, BlockHandle* handle);
+  // writeblock 实际操作
   void WriteRawBlock(const Slice& data, CompressionType, BlockHandle* handle);
 
   struct Rep;

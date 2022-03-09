@@ -63,12 +63,16 @@ Status Footer::DecodeFrom(Slice* input) {
 
 Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
                  const BlockHandle& handle, BlockContents* result) {
+
+  /// 1.初始化结果result，BlockContents是一个有3个成员的结构体
   result->data = Slice();
   result->cachable = false;
   result->heap_allocated = false;
 
   // Read the block contents as well as the type/crc footer.
   // See table_builder.cc for the code that built this structure.
+  /// 2.根据handle指定的偏移和大小，读取block内容，type和crc32值，
+  /// 其中常量kBlockTrailerSize=5= 1byte的type和4bytes的crc32
   size_t n = static_cast<size_t>(handle.size());
   char* buf = new char[n + kBlockTrailerSize];
   Slice contents;
@@ -83,6 +87,7 @@ Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
   }
 
   // Check the crc of the type and the block contents
+  /// 3.如果option要校验CRC32，则计算content + type的CRC32并校验
   const char* data = contents.data();  // Pointer to where Read put the data
   if (options.verify_checksums) {
     const uint32_t crc = crc32c::Unmask(DecodeFixed32(data + n + 1));
@@ -94,9 +99,14 @@ Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
     }
   }
 
+  /// 4. 最后根据type指定的存储类型，如果是非压缩的，
+  /// 则直接取数据赋给result，否则先解压，
+  /// 把解压结果赋给result，目前支持的是snappy压缩。
   switch (data[n]) {
     case kNoCompression:
       if (data != buf) {
+        // 最后根据type指定的存储类型，如果是非压缩的，则直接取数据赋给result，
+        // 否则先解压，把解压结果赋给result，目前支持的是snappy压缩。
         // File implementation gave us pointer to some other data.
         // Use it directly under the assumption that it will be live
         // while the file is open.
@@ -105,6 +115,7 @@ Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
         result->heap_allocated = false;
         result->cachable = false;  // Do not double-cache
       } else {
+        // 读取者自己管理，标记设置为true
         result->data = Slice(buf, n);
         result->heap_allocated = true;
         result->cachable = true;
@@ -113,6 +124,8 @@ Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
       // Ok
       break;
     case kSnappyCompression: {
+      // 对于压缩存储，解压后的字符串存储需要读取者自行分配的，
+      // 所以result->heap_allocated标记都是true
       size_t ulength = 0;
       if (!port::Snappy_GetUncompressedLength(data, n, &ulength)) {
         delete[] buf;

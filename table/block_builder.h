@@ -22,6 +22,7 @@ class BlockBuilder {
   BlockBuilder& operator=(const BlockBuilder&) = delete;
 
   // Reset the contents as if the BlockBuilder was just constructed.
+  // 重设结构体，开始处理新的的Block
   void Reset();
 
   // REQUIRES: Finish() has not been called since the last call to Reset().
@@ -31,10 +32,12 @@ class BlockBuilder {
   // Finish building the block and return a slice that refers to the
   // block contents.  The returned slice will remain valid for the
   // lifetime of this builder or until Reset() is called.
+  // 若当前块构造结束，调用该函数，返回一个引用 block contents 的 slice
   Slice Finish();
 
   // Returns an estimate of the current (uncompressed) size of the block
   // we are building.
+  // 返回当前block大小（未压缩）
   size_t CurrentSizeEstimate() const;
 
   // Return true iff no entries have been added since the last Reset()
@@ -42,11 +45,15 @@ class BlockBuilder {
 
  private:
   const Options* options_;
+  // block 内容
   std::string buffer_;              // Destination buffer
+  // 记录重启点
   std::vector<uint32_t> restarts_;  // Restart points
+  // 重启后emit的entry数
   int counter_;                     // Number of entries emitted since restart
   bool finished_;                   // Has Finish() been called?
-  std::string last_key_;
+  // 记录最后添加的key
+  std::string last_key_;            
 };
 
 }  // namespace leveldb

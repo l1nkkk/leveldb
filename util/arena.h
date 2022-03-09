@@ -23,33 +23,38 @@ class Arena {
   ~Arena();
 
   // Return a pointer to a newly allocated memory block of "bytes" bytes.
+  // 申请内存，不对齐版；返回一个可用的堆内存指针
   char* Allocate(size_t bytes);
 
   // Allocate memory with the normal alignment guarantees provided by malloc.
+  // 申请内存，对齐版；返回一个可用的堆内存指针
   char* AllocateAligned(size_t bytes);
 
   // Returns an estimate of the total memory usage of data allocated
   // by the arena.
+  // 当前内存池所占内存，包括未被申请的
   size_t MemoryUsage() const {
     return memory_usage_.load(std::memory_order_relaxed);
   }
 
  private:
+  // 包装AllocateNewBlock，增加一些策略，让内存池更加高效
   char* AllocateFallback(size_t bytes);
+  // 分配一个内存块，并更新内部状态：blocks_和 blocks_memory_
   char* AllocateNewBlock(size_t block_bytes);
 
   // Allocation state
-  char* alloc_ptr_;
-  size_t alloc_bytes_remaining_;
+  char* alloc_ptr_;// 指向当前的内存块
+  size_t alloc_bytes_remaining_;// 当前内存块剩下的字节数
 
   // Array of new[] allocated memory blocks
-  std::vector<char*> blocks_;
+  std::vector<char*> blocks_; // 指向分配的内存块
 
   // Total memory usage of the arena.
   //
   // TODO(costan): This member is accessed via atomics, but the others are
   //               accessed without any locking. Is this OK?
-  std::atomic<size_t> memory_usage_;
+  std::atomic<size_t> memory_usage_; // 目前为止已经分配的字节数
 };
 
 inline char* Arena::Allocate(size_t bytes) {

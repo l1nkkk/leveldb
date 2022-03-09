@@ -36,6 +36,7 @@
 
 namespace leveldb {
 
+// LevelDB中，根据key来比较大小。这里的类型变量分别为key的类型和比较器类
 template <typename Key, class Comparator>
 class SkipList {
  private:
@@ -52,12 +53,15 @@ class SkipList {
 
   // Insert key into the list.
   // REQUIRES: nothing that compares equal to key is currently in the list.
+  // 插入
   void Insert(const Key& key);
 
   // Returns true iff an entry that compares equal to key is in the list.
+  // key是否存在
   bool Contains(const Key& key) const;
 
   // Iteration over the contents of a skip list
+  // 提供给外部操作的skiplist迭代器
   class Iterator {
    public:
     // Initialize an iterator over the specified list.
@@ -91,6 +95,8 @@ class SkipList {
     void SeekToLast();
 
    private:
+
+    // skiplist最大高度
     const SkipList* list_;
     Node* node_;
     // Intentionally copyable

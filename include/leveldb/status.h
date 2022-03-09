@@ -37,6 +37,7 @@ class LEVELDB_EXPORT Status {
   static Status OK() { return Status(); }
 
   // Return error status of an appropriate type.
+  // 一些工厂方法
   static Status NotFound(const Slice& msg, const Slice& msg2 = Slice()) {
     return Status(kNotFound, msg, msg2);
   }

@@ -45,6 +45,7 @@ class LEVELDB_EXPORT Comparator {
   // If *start < limit, changes *start to a short string in [start,limit).
   // Simple comparator implementations may return with *start unchanged,
   // i.e., an implementation of this method that does nothing is correct.
+  // 找到[start,limit)之间的最短string，并将结果赋值给 start
   virtual void FindShortestSeparator(std::string* start,
                                      const Slice& limit) const = 0;
 

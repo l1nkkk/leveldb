@@ -70,24 +70,33 @@ Slice BlockBuilder::Finish() {
 
 void BlockBuilder::Add(const Slice& key, const Slice& value) {
   Slice last_key_piece(last_key_);
+
+  /// 1. 保证新加入的key > 已加入的任何一个key；
   assert(!finished_);
   assert(counter_ <= options_->block_restart_interval);
   assert(buffer_.empty()  // No values yet?
          || options_->comparator->Compare(key, last_key_piece) > 0);
+
+  /// 2. 如果计数器counter < opions->block_restart_interval，
+  /// 则使用前缀算法压缩key，否则就把key作为一个重启点，无压缩存储；
   size_t shared = 0;
   if (counter_ < options_->block_restart_interval) {
+    // l1nkkk: 前缀压缩
     // See how much sharing to do with previous string
     const size_t min_length = std::min(last_key_piece.size(), key.size());
     while ((shared < min_length) && (last_key_piece[shared] == key[shared])) {
+      // 计算出和最后一个key共享多少个字节
       shared++;
     }
   } else {
     // Restart compression
+    // 将索引push到record中
     restarts_.push_back(buffer_.size());
     counter_ = 0;
   }
   const size_t non_shared = key.size() - shared;
 
+  /// 3. 构造entry, <shared> || <non_shared> || <value_size> || key_delta || value
   // Add "<shared><non_shared><value_size>" to buffer_
   PutVarint32(&buffer_, shared);
   PutVarint32(&buffer_, non_shared);
@@ -98,6 +107,7 @@ void BlockBuilder::Add(const Slice& key, const Slice& value) {
   buffer_.append(value.data(), value.size());
 
   // Update state
+  /// 4. 更新状态
   last_key_.resize(shared);
   last_key_.append(key.data() + shared, non_shared);
   assert(Slice(last_key_) == key);

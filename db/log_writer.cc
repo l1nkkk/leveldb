@@ -40,9 +40,13 @@ Status Writer::AddRecord(const Slice& slice) {
   // zero-length record
   Status s;
   bool begin = true;
+
+  /// 可能需要对 slice 进行切割
   do {
     const int leftover = kBlockSize - block_offset_;
     assert(leftover >= 0);
+    /// 1.如果0 < leftover < kHeaderSize：用 0 byte 填充，之后重置block_offset_
+    // block 剩余字节数
     if (leftover < kHeaderSize) {
       // Switch to a new block
       if (leftover > 0) {
@@ -56,9 +60,15 @@ Status Writer::AddRecord(const Slice& slice) {
     // Invariant: we never leave < kHeaderSize bytes in a block.
     assert(kBlockSize - block_offset_ - kHeaderSize >= 0);
 
+    /// 2. 计算block剩余大小，再决定本次log record可写入数据长度
+    // avail 表示除去record头部，当前block的可用大小；
+    // fragment_length 表示当前正要emit的record的内容大小
+    // （可能只是 AddRecord 所需处理的一部分）
+    // left 表示 AddRecord 需要emit 的 record 剩下的内容打下
     const size_t avail = kBlockSize - block_offset_ - kHeaderSize;
     const size_t fragment_length = (left < avail) ? left : avail;
 
+    /// 3. 判断log type
     RecordType type;
     const bool end = (left == fragment_length);
     if (begin && end) {
@@ -71,6 +81,7 @@ Status Writer::AddRecord(const Slice& slice) {
       type = kMiddleType;
     }
 
+    /// 4. 调用EmitPhysicalRecord函数，append日志；并更新指针、剩余长度和begin标记
     s = EmitPhysicalRecord(type, ptr, fragment_length);
     ptr += fragment_length;
     left -= fragment_length;

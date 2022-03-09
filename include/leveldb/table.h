@@ -37,6 +37,9 @@ class LEVELDB_EXPORT Table {
   // for the duration of the returned table's lifetime.
   //
   // *file must remain live while this Table is in use.
+  // 
+  // 静态成员函数，打开 SStable，如果操作成功，指针*table指向新打开的表，否则返回错误。
+  // 要打开的文件和大小分别由参数file和file_size指定；option是一些选项；
   static Status Open(const Options& options, RandomAccessFile* file,
                      uint64_t file_size, Table** table);
 
@@ -73,7 +76,10 @@ class LEVELDB_EXPORT Table {
                      void (*handle_result)(void* arg, const Slice& k,
                                            const Slice& v));
 
+  // meta block 读取
   void ReadMeta(const Footer& footer);
+
+  // 根据指定的偏移和大小，读取filter
   void ReadFilter(const Slice& filter_handle_value);
 
   Rep* const rep_;

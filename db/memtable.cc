@@ -11,6 +11,7 @@
 
 namespace leveldb {
 
+// 将前缀中的varInt值摘掉，返回摘掉后的slice
 static Slice GetLengthPrefixedSlice(const char* data) {
   uint32_t len;
   const char* p = data;
@@ -28,8 +29,10 @@ size_t MemTable::ApproximateMemoryUsage() { return arena_.MemoryUsage(); }
 int MemTable::KeyComparator::operator()(const char* aptr,
                                         const char* bptr) const {
   // Internal keys are encoded as length-prefixed strings.
+  // l1nkkk: 内部的建都是以 length-prefixed 的方式编码存入
   Slice a = GetLengthPrefixedSlice(aptr);
   Slice b = GetLengthPrefixedSlice(bptr);
+  // 去除前缀后进行比较
   return comparator.Compare(a, b);
 }
 
@@ -43,6 +46,7 @@ static const char* EncodeKey(std::string* scratch, const Slice& target) {
   return scratch->data();
 }
 
+// l1nkkk: 注意区分两个 Iterator
 class MemTableIterator : public Iterator {
  public:
   explicit MemTableIterator(MemTable::Table* table) : iter_(table) {}
@@ -81,21 +85,30 @@ void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
   //  tag          : uint64((sequence << 8) | type)
   //  value_size   : varint32 of value.size()
   //  value bytes  : char[value.size()]
+  // 1.计算需要分配的内存大小
   size_t key_size = key.size();
   size_t val_size = value.size();
   size_t internal_key_size = key_size + 8;
   const size_t encoded_len = VarintLength(internal_key_size) +
                              internal_key_size + VarintLength(val_size) +
                              val_size;
+
+
+  // 2.构造entry
+  // key_size || key || ((s << 8) | type) || value_size || value
   char* buf = arena_.Allocate(encoded_len);
   char* p = EncodeVarint32(buf, internal_key_size);
   std::memcpy(p, key.data(), key_size);
   p += key_size;
+
   EncodeFixed64(p, (s << 8) | type);
   p += 8;
+
   p = EncodeVarint32(p, val_size);
   std::memcpy(p, value.data(), val_size);
   assert(p + val_size == buf + encoded_len);
+
+  // 3. insert to skipList
   table_.Insert(buf);
 }
 

@@ -34,9 +34,11 @@ class Writer {
 
   ~Writer();
 
+  // 将 user record emit 到log file
   Status AddRecord(const Slice& slice);
 
  private:
+  // 将 PhysicalRecord emit 到 log file
   Status EmitPhysicalRecord(RecordType type, const char* ptr, size_t length);
 
   WritableFile* dest_;

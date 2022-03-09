@@ -35,15 +35,15 @@ struct TableBuilder::Rep {
     index_block_options.block_restart_interval = 1;
   }
 
-  Options options;
-  Options index_block_options;
-  WritableFile* file;
-  uint64_t offset;
-  Status status;
-  BlockBuilder data_block;
-  BlockBuilder index_block;
-  std::string last_key;
-  int64_t num_entries;
+  Options options;              // data block的选项
+  Options index_block_options;  // index block的选项
+  WritableFile* file;           // sstable文件io对象
+  uint64_t offset;              // 要写入data block在sstable文件中的偏移，初始0
+  Status status;                // 当前状态，初始ok
+  BlockBuilder data_block;      // 当前操作的data block
+  BlockBuilder index_block;     // sstable的index block
+  std::string last_key;         // 当前data block最后的k/v对的key
+  int64_t num_entries;          // 当前data block的个数，初始0
   bool closed;  // Either Finish() or Abandon() has been called.
   FilterBlockBuilder* filter_block;
 
@@ -56,9 +56,11 @@ struct TableBuilder::Rep {
   // blocks.
   //
   // Invariant: r->pending_index_entry is true only if data_block is empty.
-  bool pending_index_entry;
+  bool pending_index_entry;   // 见下面的Add函数，初始false
+ 
   BlockHandle pending_handle;  // Handle to add to index block
 
+  //压缩后的data block，临时存储，写入后即被清空
   std::string compressed_output;
 };
 
@@ -92,6 +94,10 @@ Status TableBuilder::ChangeOptions(const Options& options) {
 }
 
 void TableBuilder::Add(const Slice& key, const Slice& value) {
+  /// 1. 合法性检验
+  /// a.保证文件没有close，也就是没有调用过Finish/Abandon，
+  /// b.保证当前status为ok；
+  /// c.如果当前有缓存的kv对，保证新加入的key是最大的
   Rep* r = rep_;
   assert(!r->closed);
   if (!ok()) return;
@@ -99,23 +105,35 @@ void TableBuilder::Add(const Slice& key, const Slice& value) {
     assert(r->options.comparator->Compare(key, Slice(r->last_key)) > 0);
   }
 
+  /// 2. r->pending_index_entry为true，表明需要add到下一个data block。
+  /// 这时候要插入index entry
+  /// l1nkkk: 等到这个时候才生成 index entry ，这样可以用一个较短的字符串
   if (r->pending_index_entry) {
     assert(r->data_block.empty());
+
+    // 获取[&r->last_key, key) 的最短string
     r->options.comparator->FindShortestSeparator(&r->last_key, key);
+    
+    // 编码当前块的BlockHandle
     std::string handle_encoding;
     r->pending_handle.EncodeTo(&handle_encoding);
     r->index_block.Add(r->last_key, Slice(handle_encoding));
     r->pending_index_entry = false;
   }
 
+
+  /// 3. filter_block add key
   if (r->filter_block != nullptr) {
     r->filter_block->AddKey(key);
   }
 
+  /// 4. 插入数据到SSTable当前block
   r->last_key.assign(key.data(), key.size());
   r->num_entries++;
   r->data_block.Add(key, value);
 
+
+  /// 5. 如果DataBlock的大小超过限制，Flush到磁盘
   const size_t estimated_block_size = r->data_block.CurrentSizeEstimate();
   if (estimated_block_size >= r->options.block_size) {
     Flush();
@@ -123,18 +141,24 @@ void TableBuilder::Add(const Slice& key, const Slice& value) {
 }
 
 void TableBuilder::Flush() {
+
+  /// 1. 检查条件
   Rep* r = rep_;
   assert(!r->closed);
   if (!ok()) return;
   if (r->data_block.empty()) return;
   assert(!r->pending_index_entry);
+
+  /// 2.写入块
   WriteBlock(&r->data_block, &r->pending_handle);
   if (ok()) {
     r->pending_index_entry = true;
     r->status = r->file->Flush();
   }
   if (r->filter_block != nullptr) {
+    // 将data block在sstable中的便宜加入到filter block中
     r->filter_block->StartBlock(r->offset);
+    // 并指明开始新的data block
   }
 }
 
@@ -143,12 +167,16 @@ void TableBuilder::WriteBlock(BlockBuilder* block, BlockHandle* handle) {
   //    block_data: uint8[n]
   //    type: uint8
   //    crc: uint32
+
+  /// 1. finish block，get block data
   assert(ok());
   Rep* r = rep_;
   Slice raw = block->Finish();
 
   Slice block_contents;
   CompressionType type = r->options.compression;
+
+  /// 2. 判断使用哪种压缩方式
   // TODO(postrelease): Support more compression options: zlib?
   switch (type) {
     case kNoCompression:
@@ -161,6 +189,8 @@ void TableBuilder::WriteBlock(BlockBuilder* block, BlockHandle* handle) {
           compressed->size() < raw.size() - (raw.size() / 8u)) {
         block_contents = *compressed;
       } else {
+
+        // 如果压缩率小于12.5或者 snappy不支持，则不压缩
         // Snappy not supported, or compressed less than 12.5%, so just
         // store uncompressed form
         block_contents = raw;
@@ -169,8 +199,12 @@ void TableBuilder::WriteBlock(BlockBuilder* block, BlockHandle* handle) {
       break;
     }
   }
+
+  /// 3. 设置 BlockHandle，生成 type || crc32，将block持久化到文件
   WriteRawBlock(block_contents, type, handle);
   r->compressed_output.clear();
+
+  /// 4. 重置 current block
   block->Reset();
 }
 
@@ -179,6 +213,8 @@ void TableBuilder::WriteRawBlock(const Slice& block_contents,
   Rep* r = rep_;
   handle->set_offset(r->offset);
   handle->set_size(block_contents.size());
+
+  // 写入  block_contents
   r->status = r->file->Append(block_contents);
   if (r->status.ok()) {
     char trailer[kBlockTrailerSize];
@@ -186,6 +222,7 @@ void TableBuilder::WriteRawBlock(const Slice& block_contents,
     uint32_t crc = crc32c::Value(block_contents.data(), block_contents.size());
     crc = crc32c::Extend(crc, trailer, 1);  // Extend crc to cover block type
     EncodeFixed32(trailer + 1, crc32c::Mask(crc));
+    // 写入 type || crc32
     r->status = r->file->Append(Slice(trailer, kBlockTrailerSize));
     if (r->status.ok()) {
       r->offset += block_contents.size() + kBlockTrailerSize;
@@ -197,18 +234,23 @@ Status TableBuilder::status() const { return rep_->status; }
 
 Status TableBuilder::Finish() {
   Rep* r = rep_;
+
+  /// 1.写入最后一个Block
   Flush();
   assert(!r->closed);
   r->closed = true;
 
   BlockHandle filter_block_handle, metaindex_block_handle, index_block_handle;
 
-  // Write filter block
+
+  /// 2.Write filter block，只有一个 filter block作为SSTable 的meta Block
   if (ok() && r->filter_block != nullptr) {
     WriteRawBlock(r->filter_block->Finish(), kNoCompression,
                   &filter_block_handle);
   }
 
+
+  /// 3.写入meta_index_block，内部记录 filter block 索引
   // Write metaindex block
   if (ok()) {
     BlockBuilder meta_index_block(&r->options);
@@ -225,6 +267,8 @@ Status TableBuilder::Finish() {
     WriteBlock(&meta_index_block, &metaindex_block_handle);
   }
 
+
+  /// 4.写入 index_block
   // Write index block
   if (ok()) {
     if (r->pending_index_entry) {
@@ -237,6 +281,8 @@ Status TableBuilder::Finish() {
     WriteBlock(&r->index_block, &index_block_handle);
   }
 
+
+  /// 5.写入Footer
   // Write footer
   if (ok()) {
     Footer footer;

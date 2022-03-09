@@ -30,6 +30,8 @@ class MemTable {
   void Ref() { ++refs_; }
 
   // Drop reference count.  Delete if no more references exist.
+  // l1nkkk: delete this;是允许的，详见：
+  // https://isocpp.org/wiki/faq/freestore-mgmt#delete-this
   void Unref() {
     --refs_;
     assert(refs_ >= 0);
@@ -40,6 +42,7 @@ class MemTable {
 
   // Returns an estimate of the number of bytes of data in use by this
   // data structure. It is safe to call when MemTable is being modified.
+  // 返回 MemTable 大概占用的空间大小，return arena_.MemoryUsage();
   size_t ApproximateMemoryUsage();
 
   // Return an iterator that yields the contents of the memtable.
@@ -53,6 +56,8 @@ class MemTable {
   // Add an entry into memtable that maps key to value at the
   // specified sequence number and with the specified type.
   // Typically value will be empty if type==kTypeDeletion.
+  // 添加 entry={key, value}，ValueType 决定该数据是 ADD类型还是DEL类型。
+  // seq 干嘛用？
   void Add(SequenceNumber seq, ValueType type, const Slice& key,
            const Slice& value);
 
@@ -60,6 +65,8 @@ class MemTable {
   // If memtable contains a deletion for key, store a NotFound() error
   // in *status and return true.
   // Else, return false.
+  // 获取 key 对应的 value，
+  // 只有找到与key相关的数据或墓碑，才返回true，其他返回fallse
   bool Get(const LookupKey& key, std::string* value, Status* s);
 
  private:
@@ -74,6 +81,7 @@ class MemTable {
 
   typedef SkipList<const char*, KeyComparator> Table;
 
+  // private，被Unref所调用，有什么好处？
   ~MemTable();  // Private since only Unref() should be used to delete it
 
   KeyComparator comparator_;
