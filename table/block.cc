@@ -89,7 +89,7 @@ class Block::Iter : public Iterator {
   uint32_t restart_index_;  // Index of restart block in which current_ falls
   std::string key_;         // 当前的key
   Slice value_;             // 当前的value
-  Status status_;
+  Status status_;           // 当前 iter 的 status
 
   // 比较两个Slice
   inline int Compare(const Slice& a, const Slice& b) const {

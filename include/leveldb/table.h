@@ -59,12 +59,15 @@ class LEVELDB_EXPORT Table {
   // bytes, and so includes effects like compression of the underlying data.
   // E.g., the approximate offset of the last key in the table will
   // be close to the file length.
+  // 返回根据 key 所定位到的 index block 在SSTable 中的 offset；
+  // 如果定位不到，则返回  metaIndex block 的BlockHandle的offset；
   uint64_t ApproximateOffsetOf(const Slice& key) const;
 
  private:
   friend class TableCache;
   struct Rep;
 
+  // 根据给出的index_value(BlockHandle)读取Block，并返回该Block的iterator
   static Iterator* BlockReader(void*, const ReadOptions&, const Slice&);
 
   explicit Table(Rep* rep) : rep_(rep) {}
@@ -72,6 +75,8 @@ class LEVELDB_EXPORT Table {
   // Calls (*handle_result)(arg, ...) with the entry found after a call
   // to Seek(key).  May not make such a call if filter policy says
   // that key is not present.
+  // 根据传入的key，将 index_iter 和 datablock_iter定位，获取对应的key，value，
+  // 调用handle_result，传入获取的key，value，处理数据
   Status InternalGet(const ReadOptions&, const Slice& key, void* arg,
                      void (*handle_result)(void* arg, const Slice& k,
                                            const Slice& v));

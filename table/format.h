@@ -86,6 +86,7 @@ struct BlockContents {
 
 // Read the block identified by "handle" from "file".  On failure
 // return non-OK.  On success fill *result and return OK.
+// 从文件对象中读取Block（BlockContents || type || crc32）在将其转化成 ===> BlockContent
 Status ReadBlock(RandomAccessFile* file, const ReadOptions& options,
                  const BlockHandle& handle, BlockContents* result);
 

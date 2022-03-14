@@ -15,6 +15,7 @@ namespace {
 
 typedef Iterator* (*BlockFunction)(void*, const ReadOptions&, const Slice&);
 
+// 专门为Table定制的
 class TwoLevelIterator : public Iterator {
  public:
   TwoLevelIterator(Iterator* index_iter, BlockFunction block_function,
@@ -52,19 +53,35 @@ class TwoLevelIterator : public Iterator {
   void SaveError(const Status& s) {
     if (status_.ok() && !s.ok()) status_ = s;
   }
+
+  // 如果data_iter 已经指向该 block 的末尾，切换到下一个 block,
+  // if data_iter_.iter() == nullptr || !data_iter_.Valid(),
+  // index_iter_.Next() 的方式切换data Block
   void SkipEmptyDataBlocksForward();
+
+  // 如果data_iter 已经指向该 block 的末尾，切换到上一个 block，
+  // if data_iter_.iter() == nullptr || !data_iter_.Valid(),
+  // index_iter_.Prev() 的方式切换data Block
   void SkipEmptyDataBlocksBackward();
+
+  // 设置当前 data block 的iterator
   void SetDataIterator(Iterator* data_iter);
+
+  // 根据当前的index block 迭代器index_iter_，
+  // 更新data block 迭代器 data_iter_的位置
   void InitDataBlock();
 
-  BlockFunction block_function_;
-  void* arg_;
-  const ReadOptions options_;
-  Status status_;
-  IteratorWrapper index_iter_;
-  IteratorWrapper data_iter_;  // May be nullptr
+  BlockFunction block_function_;  // block解析函数  
+  void* arg_;                     // BlockFunction 的参数，一般传入Table*
+  const ReadOptions options_;     // BlockFunction 的 ReadOptions 实参
+  Status status_;                 // iter 状态
+  IteratorWrapper index_iter_;    // index Block 的迭代器
+  IteratorWrapper data_iter_;     // May be nullptr，current data Block iterator
   // If data_iter_ is non-null, then "data_block_handle_" holds the
   // "index_value" passed to block_function_ to create the data_iter_.
+  // 如果 data_iter_ 不为 null，说明调用过 block_function_ 进行创建，
+  // 此时 data_block_handle_ 记录的是当前 data Block 的 BlockHandle，
+  // 避免重复Seek的适合，相同的 BlockHandle 创建多次。
   std::string data_block_handle_;
 };
 
@@ -79,10 +96,18 @@ TwoLevelIterator::TwoLevelIterator(Iterator* index_iter,
 
 TwoLevelIterator::~TwoLevelIterator() = default;
 
+// 注：想想 index Block 中的 key 是什么，那样设计的作用体现了。
 void TwoLevelIterator::Seek(const Slice& target) {
+  // 1. 先 seek index iterator
   index_iter_.Seek(target);
+
+  // 2. 再调整当前 data block 迭代器指向的 block
   InitDataBlock();
+
+  // 3. 再定位 当前 data block 迭代器 的位置
   if (data_iter_.iter() != nullptr) data_iter_.Seek(target);
+
+  // 4. 如果data_iter 已经指向该 block 的末尾，切换到下一个 block
   SkipEmptyDataBlocksForward();
 }
 
@@ -125,6 +150,7 @@ void TwoLevelIterator::SkipEmptyDataBlocksForward() {
   }
 }
 
+// 
 void TwoLevelIterator::SkipEmptyDataBlocksBackward() {
   while (data_iter_.iter() == nullptr || !data_iter_.Valid()) {
     // Move to next block
@@ -147,12 +173,15 @@ void TwoLevelIterator::InitDataBlock() {
   if (!index_iter_.Valid()) {
     SetDataIterator(nullptr);
   } else {
+    // 1. 从index_iter_，获取 data block 的BlockHandle
     Slice handle = index_iter_.value();
     if (data_iter_.iter() != nullptr &&
         handle.compare(data_block_handle_) == 0) {
+      // 当前 data_iter_ 所迭代的块，就是所要切换的块
       // data_iter_ is already constructed with this iterator, so
       // no need to change anything
     } else {
+      // 2. 导入data block数据，返回迭代器
       Iterator* iter = (*block_function_)(arg_, options_, handle);
       data_block_handle_.assign(handle.data(), handle.size());
       SetDataIterator(iter);

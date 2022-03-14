@@ -156,7 +156,8 @@ void TableBuilder::Flush() {
     r->status = r->file->Flush();
   }
   if (r->filter_block != nullptr) {
-    // 将data block在sstable中的便宜加入到filter block中
+    // 将data block在sstable中的偏移传入，在filter Block 中
+    // 试探构建新的filter，详见 FilterBlockBuilder 源码
     r->filter_block->StartBlock(r->offset);
     // 并指明开始新的data block
   }

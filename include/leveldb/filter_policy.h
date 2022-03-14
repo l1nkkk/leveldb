@@ -32,6 +32,7 @@ class LEVELDB_EXPORT FilterPolicy {
   // changes in an incompatible way, the name returned by this method
   // must be changed.  Otherwise, old incompatible filters may be
   // passed to methods of this type.
+  // 返回 filter Name
   virtual const char* Name() const = 0;
 
   // keys[0,n-1] contains a list of keys (potentially with duplicates)
@@ -40,6 +41,9 @@ class LEVELDB_EXPORT FilterPolicy {
   //
   // Warning: do not change the initial contents of *dst.  Instead,
   // append the newly constructed filter to *dst.
+  // 该接口用于生成filter。
+  // keys 为有序的key集合，集合的元素数量为n，根据该集合生成filter，
+  // 将生成的filter append 到 dst；注意：不能修改dst原有的内容
   virtual void CreateFilter(const Slice* keys, int n,
                             std::string* dst) const = 0;
 
@@ -48,6 +52,7 @@ class LEVELDB_EXPORT FilterPolicy {
   // the key was in the list of keys passed to CreateFilter().
   // This method may return true or false if the key was not on the
   // list, but it should aim to return false with a high probability.
+  // 根据 filter 过滤 key ，通过过滤返回 true，否则返回false；
   virtual bool KeyMayMatch(const Slice& key, const Slice& filter) const = 0;
 };
 

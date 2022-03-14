@@ -24,15 +24,15 @@ struct Table::Rep {
     delete index_block;
   }
 
-  Options options;
-  Status status;
-  RandomAccessFile* file;
-  uint64_t cache_id;
-  FilterBlockReader* filter;
-  const char* filter_data;
+  Options options;            // SSTable 选项
+  Status status;              // SSTable  status
+  RandomAccessFile* file;     // file io 对象
+  uint64_t cache_id;          // 缓存id
+  FilterBlockReader* filter;  // 过滤器对象
+  const char* filter_data;    // 过滤器BlockContain的raw data
 
   BlockHandle metaindex_handle;  // Handle to metaindex_block: saved from footer
-  Block* index_block;
+  Block* index_block;           // index block，data block 的索引
 };
 
 Status Table::Open(const Options& options, RandomAccessFile* file,
@@ -61,7 +61,7 @@ Status Table::Open(const Options& options, RandomAccessFile* file,
   }
   s = ReadBlock(file, opt, footer.index_handle(), &index_block_contents);
 
-  /// 3. 读取 metaindex block ，再读取 meta block（filter block）
+  /// 3. 更新状态
   if (s.ok()) {
     // We've successfully read the footer and the index block: we're
     // ready to serve requests.
@@ -69,7 +69,7 @@ Status Table::Open(const Options& options, RandomAccessFile* file,
     Rep* rep = new Table::Rep;
     rep->options = options;
     rep->file = file;
-    // 3-1. 从footer的 metaindex handle，并读取 metaIndex block
+    // 如果option打开了cache，还要为table创建cache
     rep->metaindex_handle = footer.metaindex_handle();
     rep->index_block = index_block;
     rep->cache_id = (options.block_cache ? options.block_cache->NewId() : 0);
@@ -77,7 +77,7 @@ Status Table::Open(const Options& options, RandomAccessFile* file,
     rep->filter = nullptr;
     *table = new Table(rep);
 
-    // 3-2 读取metaindex block
+    // 3-1 读取metaindex block，再从中找到符合要求的metablock读取（filter）
     (*table)->ReadMeta(footer);
   }
 
@@ -171,12 +171,14 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
   Block* block = nullptr;
   Cache::Handle* cache_handle = nullptr;
 
+  // 1. 从参数 index_value 中解析出 BlockHandle
   BlockHandle handle;
   Slice input = index_value;
   Status s = handle.DecodeFrom(&input);
   // We intentionally allow extra stuff in index_value so that we
   // can add more features in the future.
 
+  // 2. 处理cache，并获得BlockContent，根据BlockContent 构造 Block对象
   if (s.ok()) {
     BlockContents contents;
     if (block_cache != nullptr) {
@@ -205,6 +207,7 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
     }
   }
 
+  // 根据Block对象生成 Block::Iterator
   Iterator* iter;
   if (block != nullptr) {
     iter = block->NewIterator(table->rep_->options.comparator);
@@ -228,20 +231,28 @@ Iterator* Table::NewIterator(const ReadOptions& options) const {
 Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
                           void (*handle_result)(void*, const Slice&,
                                                 const Slice&)) {
+  //  1. 首先根据传入的k定位index_block的iter
   Status s;
   Iterator* iiter = rep_->index_block->NewIterator(rep_->options.comparator);
   iiter->Seek(k);
   if (iiter->Valid()) {
+    // 2. 获取 index_block的iter 指向的 BlockHandle 
     Slice handle_value = iiter->value();
     FilterBlockReader* filter = rep_->filter;
     BlockHandle handle;
+
+    // 3. 使用filter过滤
     if (filter != nullptr && handle.DecodeFrom(&handle_value).ok() &&
         !filter->KeyMayMatch(handle.offset(), k)) {
       // Not found
     } else {
+      // 4. 从index_value(BlockHandle)中读取Block，并返回该Block的iterator
       Iterator* block_iter = BlockReader(this, options, iiter->value());
+      
+      // 5. 根据传入的k定位block_iter的iter
       block_iter->Seek(k);
       if (block_iter->Valid()) {
+        // 6. 调用用户自定义的函数handle_result，处理定位到的 key ，value
         (*handle_result)(arg, block_iter->key(), block_iter->value());
       }
       s = block_iter->status();
@@ -256,11 +267,16 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
 }
 
 uint64_t Table::ApproximateOffsetOf(const Slice& key) const {
+
+  // 1. 将 index iterator 定位到 key（定位data block的索引）
   Iterator* index_iter =
       rep_->index_block->NewIterator(rep_->options.comparator);
   index_iter->Seek(key);
   uint64_t result;
   if (index_iter->Valid()) {
+    // 2. 获取 index iterator 指向的 BlockHandle，
+    // 如果获取成功，将返回结果设置为BlockHandle中的offset；
+    // 否则设置为 metaIndex block 的BlockHandle的offset；
     BlockHandle handle;
     Slice input = index_iter->value();
     Status s = handle.DecodeFrom(&input);

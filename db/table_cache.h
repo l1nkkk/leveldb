@@ -19,6 +19,7 @@ namespace leveldb {
 
 class Env;
 
+// 每个DB一个
 class TableCache {
  public:
   TableCache(const std::string& dbname, const Options& options, int entries);
@@ -28,6 +29,9 @@ class TableCache {
 
   ~TableCache();
 
+  // 参数**@file_number是文件编号，@file_size**是文件大小
+
+  
   // Return an iterator for the specified file number (the corresponding
   // file length must be exactly "file_size" bytes).  If "tableptr" is
   // non-null, also sets "*tableptr" to point to the Table object
@@ -50,10 +54,10 @@ class TableCache {
  private:
   Status FindTable(uint64_t file_number, uint64_t file_size, Cache::Handle**);
 
-  Env* const env_;
-  const std::string dbname_;
+  Env* const env_;            // 用来操作文件 
+  const std::string dbname_;  // db Name
   const Options& options_;
-  Cache* cache_;
+  Cache* cache_;              // LRUCache
 };
 
 }  // namespace leveldb

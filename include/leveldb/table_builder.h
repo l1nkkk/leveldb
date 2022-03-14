@@ -59,7 +59,9 @@ class LEVELDB_EXPORT TableBuilder {
   // the same data block.  Most clients should not need to use this method.
   // REQUIRES: Finish(), Abandon() have not been called
   // 
-  // 将当前缓存的k/v全部flush到文件中，一个高级方法，大部分的client不需要直接调用该方法
+  // 将当前缓存的k/v全部flush到文件中，一个高级方法，大部分的client不需要直接调用该方法，
+  // 该调用会生成新的DataBlock，如果当前缓存的K/V超过阈值或者SSTable的Finish被调用，
+  // 将调用该函数
   void Flush();
 
   // Return non-ok iff some error has been detected.
