@@ -50,6 +50,8 @@ class LEVELDB_EXPORT DB {
   // OK on success.
   // Stores nullptr in *dbptr and returns a non-OK status on error.
   // Caller should delete *dbptr when it is no longer needed.
+  // 打开一个db，成功返回OK，打开的db指针保存在*dbptr中，
+  // 用完后，调用者需要调用delete *dbptr删除之
   static Status Open(const Options& options, const std::string& name,
                      DB** dbptr);
 
@@ -63,6 +65,7 @@ class LEVELDB_EXPORT DB {
   // Set the database entry for "key" to "value".  Returns OK on success,
   // and a non-OK status on error.
   // Note: consider setting options.sync = true.
+  // 设置db entries{key, value}
   virtual Status Put(const WriteOptions& options, const Slice& key,
                      const Slice& value) = 0;
 
@@ -70,11 +73,13 @@ class LEVELDB_EXPORT DB {
   // success, and a non-OK status on error.  It is not an error if "key"
   // did not exist in the database.
   // Note: consider setting options.sync = true.
+  // 在db中删除"key"，key不存在依然返回成功
   virtual Status Delete(const WriteOptions& options, const Slice& key) = 0;
 
   // Apply the specified updates to the database.
   // Returns OK on success, non-OK on failure.
   // Note: consider setting options.sync = true.
+  // 应用指定update，成功返回OK。（批处理）
   virtual Status Write(const WriteOptions& options, WriteBatch* updates) = 0;
 
   // If the database contains an entry for "key" store the
@@ -84,6 +89,8 @@ class LEVELDB_EXPORT DB {
   // a status for which Status::IsNotFound() returns true.
   //
   // May return some other Status on an error.
+  // 获取操作，如果db中有”key”项则返回结果，
+  // 没有就返回Status::IsNotFound()
   virtual Status Get(const ReadOptions& options, const Slice& key,
                      std::string* value) = 0;
 
@@ -93,16 +100,21 @@ class LEVELDB_EXPORT DB {
   //
   // Caller should delete the iterator when it is no longer needed.
   // The returned iterator should be deleted before this db is deleted.
+  // 返回heap分配的iterator，访问db的内容，返回的iterator的位置是invalid的 , 
+  // 在使用之前，调用者必须先调用Seek
   virtual Iterator* NewIterator(const ReadOptions& options) = 0;
 
   // Return a handle to the current DB state.  Iterators created with
   // this handle will all observe a stable snapshot of the current DB
   // state.  The caller must call ReleaseSnapshot(result) when the
   // snapshot is no longer needed.
+  // 返回当前db状态的handle，用该handle创建的Iterator看到的都是  
+  // 当前db状态的稳定快照。不再使用时，应该调用ReleaseSnapshot(result)  
   virtual const Snapshot* GetSnapshot() = 0;
 
   // Release a previously acquired snapshot.  The caller must not
   // use "snapshot" after this call.
+  // 释放获取的db快照 
   virtual void ReleaseSnapshot(const Snapshot* snapshot) = 0;
 
   // DB implementations can export properties about their state
@@ -121,6 +133,8 @@ class LEVELDB_EXPORT DB {
   //     of the sstables that make up the db contents.
   //  "leveldb.approximate-memory-usage" - returns the approximate number of
   //     bytes of memory in use by the DB.
+  // 返回DB的状态属性，查询property指定的属性，结果存入value；
+  // 成功返回true；
   virtual bool GetProperty(const Slice& property, std::string* value) = 0;
 
   // For each i in [0,n-1], store in "sizes[i]", the approximate
@@ -131,6 +145,11 @@ class LEVELDB_EXPORT DB {
   // sizes will be one-tenth the size of the corresponding user data size.
   //
   // The results may not include the sizes of recently written data.
+  // 
+  //"sizes[i]"保存的是"[range[i].start.. range[i].limit)"中的key使用的文件空间.  
+  // 注：返回的是文件系统的使用空间大概值，  
+  //     如果用户数据以10倍压缩，那么返回值就是对应用户数据的1/10  
+  //     结果可能不包含最近写入的数据大小.  
   virtual void GetApproximateSizes(const Range* range, int n,
                                    uint64_t* sizes) = 0;
 
@@ -152,6 +171,7 @@ class LEVELDB_EXPORT DB {
 //
 // Note: For backwards compatibility, if DestroyDB is unable to list the
 // database files, Status::OK() will still be returned masking this failure.
+// 该方法将删除指定db的所有内容  
 LEVELDB_EXPORT Status DestroyDB(const std::string& name,
                                 const Options& options);
 
@@ -159,6 +179,8 @@ LEVELDB_EXPORT Status DestroyDB(const std::string& name,
 // resurrect as much of the contents of the database as possible.
 // Some data may be lost, so be careful when calling this function
 // on a database that contains important information.
+// 如果db不能打开了，你可能调用该方法尝试纠正尽可能多的数据，
+// 可能会丢失数据，所以调用时要小心 
 LEVELDB_EXPORT Status RepairDB(const std::string& dbname,
                                const Options& options);
 

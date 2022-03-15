@@ -5,16 +5,17 @@
 #ifndef STORAGE_LEVELDB_DB_DB_IMPL_H_
 #define STORAGE_LEVELDB_DB_DB_IMPL_H_
 
+#include "db/dbformat.h"
+#include "db/log_writer.h"
+#include "db/snapshot.h"
 #include <atomic>
 #include <deque>
 #include <set>
 #include <string>
 
-#include "db/dbformat.h"
-#include "db/log_writer.h"
-#include "db/snapshot.h"
 #include "leveldb/db.h"
 #include "leveldb/env.h"
+
 #include "port/port.h"
 #include "port/thread_annotations.h"
 
@@ -116,11 +117,13 @@ class DBImpl : public DB {
   void MaybeIgnoreError(Status* s) const;
 
   // Delete any unneeded files and stale in-memory entries.
+  // 删除 不需要的文件 以及 过时的 in-memory entries
   void RemoveObsoleteFiles() EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Compact the in-memory write buffer to disk.  Switches to a new
   // log-file/memtable and writes a new descriptor iff successful.
   // Errors are recorded in bg_error_.
+  // 将im-memtable 落盘
   void CompactMemTable() EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   Status RecoverLogFile(uint64_t log_number, bool last_log, bool* save_manifest,
@@ -156,52 +159,70 @@ class DBImpl : public DB {
   }
 
   // Constant after construction
+  // == 第一组，他们在构造函数中初始化后将不再改变。
+  // 其中，InternalKeyComparator和InternalFilterPolicy
+  // 已经分别在Memtable和FilterPolicy中分析过
   Env* const env_;
-  const InternalKeyComparator internal_comparator_;
-  const InternalFilterPolicy internal_filter_policy_;
+  const InternalKeyComparator internal_comparator_;    // key comparator
+  const InternalFilterPolicy internal_filter_policy_;  // filter policy
   const Options options_;  // options_.comparator == &internal_comparator_
   const bool owns_info_log_;
   const bool owns_cache_;
   const std::string dbname_;
 
+  // == 第二组，只有两个成员
   // table_cache_ provides its own synchronization
-  TableCache* const table_cache_;
+  TableCache* const table_cache_;  // 线程安全的
 
   // Lock over the persistent DB state.  Non-null iff successfully acquired.
-  FileLock* db_lock_;
+  FileLock* db_lock_;  // 对DB加锁，persistent state，直到leveldb进程结束
 
   // State below is protected by mutex_
-  port::Mutex mutex_;
+  // == 第三组，被mutex_保护的状态和成员
+  port::Mutex mutex_;  // 互斥锁
   std::atomic<bool> shutting_down_;
+  // 在background work结束时激发
   port::CondVar background_work_finished_signal_ GUARDED_BY(mutex_);
-  MemTable* mem_;
-  MemTable* imm_ GUARDED_BY(mutex_);  // Memtable being compacted
+  MemTable* mem_; // 当前的MemTable
+  // Memtablebeing compacted
+  MemTable* imm_ GUARDED_BY(mutex_);  // immutable Memtable, Memtable being compacted
   std::atomic<bool> has_imm_;         // So bg thread can detect non-null imm_
-  WritableFile* logfile_;
-  uint64_t logfile_number_ GUARDED_BY(mutex_);
-  log::Writer* log_;
-  uint32_t seed_ GUARDED_BY(mutex_);  // For sampling.
 
+  // 这三个是log相关的
+  WritableFile* logfile_;                       // log文件
+  uint64_t logfile_number_ GUARDED_BY(mutex_);  // log文件编号
+  log::Writer* log_;                            // log writer
+  uint32_t seed_ GUARDED_BY(mutex_);            // For sampling.
+
+
+
+  //== 第四组，没有规律  
   // Queue of writers.
-  std::deque<Writer*> writers_ GUARDED_BY(mutex_);
+  std::deque<Writer*> writers_ GUARDED_BY(mutex_);  // writers队列.  
   WriteBatch* tmp_batch_ GUARDED_BY(mutex_);
 
-  SnapshotList snapshots_ GUARDED_BY(mutex_);
+  SnapshotList snapshots_ GUARDED_BY(mutex_); //snapshot列表  
 
   // Set of table files to protect from deletion because they are
   // part of ongoing compactions.
+  // 待copact的文件列表，保护以防误删  
   std::set<uint64_t> pending_outputs_ GUARDED_BY(mutex_);
 
   // Has a background compaction been scheduled or is running?
+  // 是否有后台compaction在调度或者运行? 
   bool background_compaction_scheduled_ GUARDED_BY(mutex_);
 
+  // 手动compaction信息  
   ManualCompaction* manual_compaction_ GUARDED_BY(mutex_);
 
+  // 多版本DB文件，又一个庞然大物
   VersionSet* const versions_ GUARDED_BY(mutex_);
 
   // Have we encountered a background error in paranoid mode?
+  // paranoid mode下是否有后台错误? 
   Status bg_error_ GUARDED_BY(mutex_);
 
+  // compaction状态  
   CompactionStats stats_[config::kNumLevels] GUARDED_BY(mutex_);
 };
 

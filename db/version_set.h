@@ -57,6 +57,9 @@ bool SomeFileOverlapsRange(const InternalKeyComparator& icmp,
                            const Slice* smallest_user_key,
                            const Slice* largest_user_key);
 
+
+// 一个Version就是一个某个特定版本的sstable文件集合，以及它管理的compact状态，
+// Version不会修改其管理的sstable文件，只有读取操作，多个并且构成了一个双向循环链表
 class Version {
  public:
   struct GetStats {
@@ -67,27 +70,40 @@ class Version {
   // Append to *iters a sequence of iterators that will
   // yield the contents of this Version when merged together.
   // REQUIRES: This version has been saved (see VersionSet::SaveTo)
+  // 向 *iters 追加一系列迭代器，这些迭代器在合并在一起时将产生此版本的内容。
+  // 该接口为了遍历该版本下的所有SSTable。
+  // 要求： 这个版本已经被 saved
   void AddIterators(const ReadOptions&, std::vector<Iterator*>* iters);
 
   // Lookup the value for key.  If found, store it in *val and
   // return OK.  Else return a non-OK status.  Fills *stats.
   // REQUIRES: lock is not held
+  // 获取对应 key 的 val，如果找到，将其设置到 @val 当中作为输出，并返回OK；
+  // 否则返回 non-OK 状态；
+  // 要求: lock is not held(没被上锁)
   Status Get(const ReadOptions&, const LookupKey& key, std::string* val,
              GetStats* stats);
 
   // Adds "stats" into the current state.  Returns true if a new
   // compaction may need to be triggered, false otherwise.
   // REQUIRES: lock is held
+  // 把@stats加入到当前状态中，如果需要触发新的compaction返回true
+  // 要求：lock is held
   bool UpdateStats(const GetStats& stats);
 
   // Record a sample of bytes read at the specified internal key.
   // Samples are taken approximately once every config::kReadBytesPeriod
   // bytes.  Returns true if a new compaction may need to be triggered.
   // REQUIRES: lock is held
+  // 记录从指定的internalkey @key中读取到的字节样本，
+  // 大约每 config::kReadBytesPeriod 字节采样一次,
+  // 如果可能需要触发新的压缩，则返回 true。
+  // REQUIRES: lock is held
   bool RecordReadSample(Slice key);
 
   // Reference count management (so Versions do not disappear out from
   // under live iterators)
+  // 引用计数管理
   void Ref();
   void Unref();
 
@@ -101,14 +117,20 @@ class Version {
   // some part of [*smallest_user_key,*largest_user_key].
   // smallest_user_key==nullptr represents a key smaller than all the DB's keys.
   // largest_user_key==nullptr represents a key largest than all the DB's keys.
+  // 如果指定 @level 的某些文件和 [*smallest_user_key,*largest_user_key] 有重复，
+  // 则返回 true；smallest_user_key==nullptr 表示 一个比DB中所有的key还小的key，
+  // largest_user_key==nullptr 表示 一个比DB中所有的key还大的key
   bool OverlapInLevel(int level, const Slice* smallest_user_key,
                       const Slice* largest_user_key);
 
   // Return the level at which we should place a new memtable compaction
   // result that covers the range [smallest_user_key,largest_user_key].
+  // 给定memtable中key的范围 [smallest_user_key,largest_user_key]，
+  // 返回其应该被落盘到哪个level
   int PickLevelForMemTableOutput(const Slice& smallest_user_key,
                                  const Slice& largest_user_key);
 
+  // 返回该版本下，指定level的sstable文件个数
   int NumFiles(int level) const { return files_[level].size(); }
 
   // Return a human readable string that describes this version's contents.
@@ -135,6 +157,7 @@ class Version {
 
   ~Version();
 
+  // 返回一个TwoLevelIterator对象，用来遍历<version,level >中sstable的内容
   Iterator* NewConcatenatingIterator(const ReadOptions&, int level) const;
 
   // Call func(arg, level, f) for every file that overlaps user_key in
@@ -145,21 +168,26 @@ class Version {
   void ForEachOverlapping(Slice user_key, Slice internal_key, void* arg,
                           bool (*func)(void*, int, FileMetaData*));
 
+  // 构成Version双向循环链表，vset_中存在链表表头指针
   VersionSet* vset_;  // VersionSet to which this Version belongs
   Version* next_;     // Next version in linked list
   Version* prev_;     // Previous version in linked list
   int refs_;          // Number of live refs to this version
 
   // List of files per level
+  // sstable文件列表，files_[0] 第0层的sstable
   std::vector<FileMetaData*> files_[config::kNumLevels];
 
   // Next file to compact based on seek stats.
+  // 下一个要compact的文件
   FileMetaData* file_to_compact_;
   int file_to_compact_level_;
 
   // Level that should be compacted next and its compaction score.
   // Score < 1 means compaction is not strictly needed.  These fields
   // are initialized by Finalize().
+  // 下一个应该compact的level和compaction分数.  
+  // 分数 < 1 说明compaction并不紧迫. 这些字段在Finalize()中初始化
   double compaction_score_;
   int compaction_level_;
 };
@@ -293,25 +321,33 @@ class VersionSet {
 
   void AppendVersion(Version* v);
 
-  Env* const env_;
+  //=== 第一组，直接来自于DBImple，构造函数传入
+  Env* const env_;  // 操作系统封装
   const std::string dbname_;
   const Options* const options_;
   TableCache* const table_cache_;
   const InternalKeyComparator icmp_;
-  uint64_t next_file_number_;
-  uint64_t manifest_file_number_;
+
+  //=== 第二组，db元信息相关
+  uint64_t next_file_number_; // log文件编号 
+  uint64_t manifest_file_number_; // manifest文件编号  
   uint64_t last_sequence_;
-  uint64_t log_number_;
+  uint64_t log_number_;   // log编号  
   uint64_t prev_log_number_;  // 0 or backing store for memtable being compacted
 
   // Opened lazily
+  //=== 第三组，menifest文件相关  
   WritableFile* descriptor_file_;
   log::Writer* descriptor_log_;
+
+  //=== 第四组，版本管理  
+  // versions双向链表head
   Version dummy_versions_;  // Head of circular doubly-linked list of versions.
   Version* current_;        // == dummy_versions_.prev_
 
   // Per-level key at which the next compaction at that level should start.
   // Either an empty string, or a valid InternalKey.
+  // level下一次compaction的开始key，空字符串或者合法的InternalKey  
   std::string compact_pointer_[config::kNumLevels];
 };
 

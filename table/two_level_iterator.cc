@@ -191,6 +191,7 @@ void TwoLevelIterator::InitDataBlock() {
 
 }  // namespace
 
+// 
 Iterator* NewTwoLevelIterator(Iterator* index_iter,
                               BlockFunction block_function, void* arg,
                               const ReadOptions& options) {

@@ -507,12 +507,17 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
   mutex_.AssertHeld();
   const uint64_t start_micros = env_->NowMicros();
   FileMetaData meta;
+
+  /// 1. 首先顺序生成 sstable 的编号，用于文件名
   meta.number = versions_->NewFileNumber();
   pending_outputs_.insert(meta.number);
   Iterator* iter = mem->NewIterator();
   Log(options_.info_log, "Level-0 table #%llu: started",
       (unsigned long long)meta.number);
 
+  /// 2. iter用过遍历 MemTable，通过BuildTable将数据写入到 sstable，
+  /// 该函数实际上使用 TableBuilder 类，来构造SSTable，
+  /// 其中iter用过遍历 MemTable
   Status s;
   {
     mutex_.Unlock();
@@ -528,18 +533,25 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
 
   // Note that if file_size is zero, the file has been deleted and
   // should not be added to the manifest.
+  /// 3. 获取新生成文件应加入的level，并将转态 add 到 edit 中
   int level = 0;
   if (s.ok() && meta.file_size > 0) {
     const Slice min_user_key = meta.smallest.user_key();
     const Slice max_user_key = meta.largest.user_key();
     if (base != nullptr) {
+      // 返回一个该 sstable 即将放入的 level
       level = base->PickLevelForMemTableOutput(min_user_key, max_user_key);
     }
+    // 加上meta里的文件信息，统一记录到edit
     edit->AddFile(level, meta.number, meta.file_size, meta.smallest,
                   meta.largest);
   }
 
   CompactionStats stats;
+
+  /// 4. 设置compact状态，并记录到对应层次的状态集合
+  // 计算整个过程耗费的时间，并绑定到 compact 状态 stats 中，
+  // 后奖该状态 add 到stats_[level]
   stats.micros = env_->NowMicros() - start_micros;
   stats.bytes_written = meta.file_size;
   stats_[level].Add(stats);
@@ -554,6 +566,7 @@ void DBImpl::CompactMemTable() {
   VersionEdit edit;
   Version* base = versions_->current();
   base->Ref();
+  /// 1. imm_落盘成为新的 sst 文件，文件信息记录到 edit
   Status s = WriteLevel0Table(imm_, &edit, base);
   base->Unref();
 
@@ -562,17 +575,20 @@ void DBImpl::CompactMemTable() {
   }
 
   // Replace immutable memtable with the generated Table
+  /// 2. 更新version 信息
   if (s.ok()) {
     edit.SetPrevLogNumber(0);
     edit.SetLogNumber(logfile_number_);  // Earlier logs no longer needed
     s = versions_->LogAndApply(&edit, &mutex_);
   }
 
+
   if (s.ok()) {
     // Commit to the new state
     imm_->Unref();
     imm_ = nullptr;
     has_imm_.store(false, std::memory_order_release);
+    /// 3. 删除一些无用文件，以及内存条目
     RemoveObsoleteFiles();
   } else {
     RecordBackgroundError(s);
@@ -1373,6 +1389,8 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       logfile_ = lfile;
       logfile_number_ = new_log_number;
       log_ = new log::Writer(lfile);
+      // 当size of mem_ <= options_.write_buffer_size时，
+      // 数据都会直接更新到mem_。超过大小后，mem_转化为imm_
       imm_ = mem_;
       has_imm_.store(true, std::memory_order_release);
       mem_ = new MemTable(internal_comparator_);

@@ -199,6 +199,7 @@ class Version::LevelFileNumIterator : public Iterator {
   Status status() const override { return Status::OK(); }
 
  private:
+  // indexKey 比较器
   const InternalKeyComparator icmp_;
   const std::vector<FileMetaData*>* const flist_;
   uint32_t index_;
@@ -207,18 +208,22 @@ class Version::LevelFileNumIterator : public Iterator {
   mutable char value_buf_[16];
 };
 
+/// 直接返回TableCache::NewIterator()，将迭代器指向的数据放在缓存
 static Iterator* GetFileIterator(void* arg, const ReadOptions& options,
                                  const Slice& file_value) {
   TableCache* cache = reinterpret_cast<TableCache*>(arg);
-  if (file_value.size() != 16) {
+  if (file_value.size() != 16) {// 错误
     return NewErrorIterator(
         Status::Corruption("FileReader invoked with unexpected value"));
   } else {
+    // file_value是取自于LevelFileNumIterator迭代器的value，
+    // 把 <file number, file size> 以Fixed 8byte的方式压缩成一个Slice对象并返回
     return cache->NewIterator(options, DecodeFixed64(file_value.data()),
                               DecodeFixed64(file_value.data() + 8));
   }
 }
 
+/// 返回一个TwoLevelIterator对象
 Iterator* Version::NewConcatenatingIterator(const ReadOptions& options,
                                             int level) const {
   return NewTwoLevelIterator(
@@ -229,6 +234,7 @@ Iterator* Version::NewConcatenatingIterator(const ReadOptions& options,
 void Version::AddIterators(const ReadOptions& options,
                            std::vector<Iterator*>* iters) {
   // Merge all level zero files together since they may overlap
+  /// 1. 对于level=0级别的sstable文件，直接装入cache，level0的sstable文件可能有重合，需要merge
   for (size_t i = 0; i < files_[0].size(); i++) {
     iters->push_back(vset_->table_cache_->NewIterator(
         options, files_[0][i]->number, files_[0][i]->file_size));
@@ -237,6 +243,7 @@ void Version::AddIterators(const ReadOptions& options,
   // For levels > 0, we can use a concatenating iterator that sequentially
   // walks through the non-overlapping files in the level, opening them
   // lazily.
+  /// 2. 对于level>0级别的sstable文件，lazy open机制，它们不会有重叠
   for (int level = 1; level < config::kNumLevels; level++) {
     if (!files_[level].empty()) {
       iters->push_back(NewConcatenatingIterator(options, level));
