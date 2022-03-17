@@ -188,12 +188,21 @@ class LRUCache {
   void SetCapacity(size_t capacity) { capacity_ = capacity; }
 
   // Like Cache methods, but with an extra "hash" parameter.
+  // 插入数据到LRUCache
   Cache::Handle* Insert(const Slice& key, uint32_t hash, void* value,
                         size_t charge,
                         void (*deleter)(const Slice& key, void* value));
+
+  // 根据<key,hash>查询对应的 LRUHandle ，内部对返回的 Handle 执行 Ref(),使其引用计数++
   Cache::Handle* Lookup(const Slice& key, uint32_t hash);
+
+  // 接触之前Lookup返回的Handle的引用，内部执行 handle.nref()
   void Release(Cache::Handle* handle);
+
+  // 从LRUCache中删除 <key,hash> 标志的 LRUHandle
   void Erase(const Slice& key, uint32_t hash);
+
+  // 删除LRUCache中未被使用的缓存，即 lru_ 中的数据
   void Prune();
   size_t TotalCharge() const {
     MutexLock l(&mutex_);
@@ -201,10 +210,19 @@ class LRUCache {
   }
 
  private:
+  // 将 LRUHandle @e 从其所处的双向链表中移除
   void LRU_Remove(LRUHandle* e);
+
+  // 将 LRUHandle @e 添加到双向链表 @list 中
   void LRU_Append(LRUHandle* list, LRUHandle* e);
+
+  // 引用计数++
   void Ref(LRUHandle* e);
+
+  // 引用计数--，如果为0则析构
   void Unref(LRUHandle* e);
+
+  // 私有方法，将 @e 移除 LRUCache， Return whether e != nullptr.
   bool FinishErase(LRUHandle* e) EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Initialized before use.
@@ -213,7 +231,7 @@ class LRUCache {
 
   // mutex_ protects the following state.
   mutable port::Mutex mutex_;  // Insert/Lookup等操作时都先加锁
-  size_t usage_ GUARDED_BY(mutex_);  // 用于跟capacity_比较，判断是否超过容量
+  size_t usage_ GUARDED_BY(mutex_);  // 用于跟capacity_比较，LRUCache判断是否超过容量
 
   // Dummy head of LRU list.
   // lru.prev is newest entry, lru.next is oldest entry.
@@ -276,6 +294,7 @@ void LRUCache::Unref(LRUHandle* e) {
   }
 }
 
+
 void LRUCache::LRU_Remove(LRUHandle* e) {
   e->next->prev = e->prev;
   e->prev->next = e->next;
@@ -317,10 +336,12 @@ Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value,
   e->key_length = key.size();
   e->hash = hash;
   e->in_cache = false;
+  // ++ 一次
   e->refs = 1;  // for the returned handle.
   std::memcpy(e->key_data, key.data(), key.size());
 
   if (capacity_ > 0) {
+    // ++ 两次，表示给返回的用户的引用计数
     e->refs++;  // for the cache's reference.
     e->in_cache = true;
     LRU_Append(&in_use_, e);
@@ -344,6 +365,7 @@ Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value,
 
 // If e != nullptr, finish removing *e from the cache; it has already been
 // removed from the hash table.  Return whether e != nullptr.
+// 私有方法，将 @e 移除 LRUCache， Return whether e != nullptr.
 bool LRUCache::FinishErase(LRUHandle* e) {
   if (e != nullptr) {
     assert(e->in_cache);
@@ -360,6 +382,8 @@ void LRUCache::Erase(const Slice& key, uint32_t hash) {
   FinishErase(table_.Remove(key, hash));
 }
 
+
+
 void LRUCache::Prune() {
   MutexLock l(&mutex_);
   while (lru_.next != &lru_) {
@@ -375,8 +399,11 @@ void LRUCache::Prune() {
 static const int kNumShardBits = 4;
 static const int kNumShards = 1 << kNumShardBits;
 
+// 多分片的缓存，LRUCache的接口都会加锁，为了更少的锁持有时间以及更高的缓存命中率，
+// 可以定义多个LRUCache，分别处理不同 hash 取模后的缓存处理。
 class ShardedLRUCache : public Cache {
  private:
+  // kNumShards = 1 << 4 = 16
   LRUCache shard_[kNumShards];
   port::Mutex id_mutex_;
   uint64_t last_id_;
@@ -385,6 +412,7 @@ class ShardedLRUCache : public Cache {
     return Hash(s.data(), s.size(), 0);
   }
 
+  // 分片取模
   static uint32_t Shard(uint32_t hash) { return hash >> (32 - kNumShardBits); }
 
  public:

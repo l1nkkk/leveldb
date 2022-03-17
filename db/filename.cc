@@ -25,21 +25,26 @@ static std::string MakeFileName(const std::string& dbname, uint64_t number,
   return dbname + buf;
 }
 
+// 返回构造的 log 文件路径，.log
 std::string LogFileName(const std::string& dbname, uint64_t number) {
   assert(number > 0);
   return MakeFileName(dbname, number, "log");
 }
 
+// 返回构造的 table 文件路径， .ldb
 std::string TableFileName(const std::string& dbname, uint64_t number) {
   assert(number > 0);
   return MakeFileName(dbname, number, "ldb");
 }
 
+// 返回构造的 sstable 文件路径，.sst
 std::string SSTTableFileName(const std::string& dbname, uint64_t number) {
   assert(number > 0);
   return MakeFileName(dbname, number, "sst");
 }
 
+
+// 返回构造的 manifest 文件路径
 std::string DescriptorFileName(const std::string& dbname, uint64_t number) {
   assert(number > 0);
   char buf[100];
@@ -48,22 +53,27 @@ std::string DescriptorFileName(const std::string& dbname, uint64_t number) {
   return dbname + buf;
 }
 
+// 返回构造的 CURRENT 文件路径
 std::string CurrentFileName(const std::string& dbname) {
   return dbname + "/CURRENT";
 }
 
+// 返回构造的 LOCK 文件路径
 std::string LockFileName(const std::string& dbname) { return dbname + "/LOCK"; }
 
+// 返回构造的 *.dbtmp 文件路径
 std::string TempFileName(const std::string& dbname, uint64_t number) {
   assert(number > 0);
   return MakeFileName(dbname, number, "dbtmp");
 }
 
+// 返回 leveldb 数据库的系统信息日志 /LOG 路径
 std::string InfoLogFileName(const std::string& dbname) {
   return dbname + "/LOG";
 }
 
 // Return the name of the old info log file for "dbname".
+// 被SetCurrentFile() 函数调用，用来设置临时的CURRENT名字
 std::string OldInfoLogFileName(const std::string& dbname) {
   return dbname + "/LOG.old";
 }
@@ -75,6 +85,8 @@ std::string OldInfoLogFileName(const std::string& dbname) {
 //    dbname/LOG.old
 //    dbname/MANIFEST-[0-9]+
 //    dbname/[0-9]+.(log|sst|ldb)
+// 根据传入的文件名 @filename，解析出文件编号和文件类型并存入 @number 和 @type 中，作为返回。
+// 解析成功返回true
 bool ParseFileName(const std::string& filename, uint64_t* number,
                    FileType* type) {
   Slice rest(filename);
@@ -123,13 +135,19 @@ bool ParseFileName(const std::string& filename, uint64_t* number,
 Status SetCurrentFile(Env* env, const std::string& dbname,
                       uint64_t descriptor_number) {
   // Remove leading "dbname/" and add newline to manifest file name
+
+  /// 1. 生成MANIFEST文件名
   std::string manifest = DescriptorFileName(dbname, descriptor_number);
   Slice contents = manifest;
   assert(contents.starts_with(dbname + "/"));
+  /// 2. 去除目录前缀
   contents.remove_prefix(dbname.size() + 1);
+
+  /// 3. 将文件名写入temp文件
   std::string tmp = TempFileName(dbname, descriptor_number);
   Status s = WriteStringToFileSync(env, contents.ToString() + "\n", tmp);
   if (s.ok()) {
+    /// 4.如果写入成功，将临时文件改名为 CURRENT 
     s = env->RenameFile(tmp, CurrentFileName(dbname));
   }
   if (!s.ok()) {

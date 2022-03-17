@@ -42,6 +42,9 @@ class WritableFile;
 // Return the smallest index i such that files[i]->largest >= key.
 // Return files.size() if there is no such file.
 // REQUIRES: "files" contains a sorted list of non-overlapping files.
+// 返回最小的索引i，使得 files[i]->largest >= key，
+// 如果没找到，返回 files.size()
+// 要求：files 包含一系列key有序且不覆盖的文件元信息
 int FindFile(const InternalKeyComparator& icmp,
              const std::vector<FileMetaData*>& files, const Slice& key);
 
@@ -62,6 +65,7 @@ bool SomeFileOverlapsRange(const InternalKeyComparator& icmp,
 // Version不会修改其管理的sstable文件，只有读取操作，多个并且构成了一个双向循环链表
 class Version {
  public:
+  // GetStats 包含两个数据，分别是文件元数据和其所在level
   struct GetStats {
     FileMetaData* seek_file;
     int seek_file_level;
@@ -87,7 +91,8 @@ class Version {
   // Adds "stats" into the current state.  Returns true if a new
   // compaction may need to be triggered, false otherwise.
   // REQUIRES: lock is held
-  // 把@stats加入到当前状态中，如果需要触发新的compaction返回true
+  // 把 stats(fileMetaData & level) apply到当前状态中，
+  // 如果需要触发新的compaction返回true
   // 要求：lock is held
   bool UpdateStats(const GetStats& stats);
 
@@ -95,7 +100,7 @@ class Version {
   // Samples are taken approximately once every config::kReadBytesPeriod
   // bytes.  Returns true if a new compaction may need to be triggered.
   // REQUIRES: lock is held
-  // 记录从指定的internalkey @key中读取到的字节样本，
+  // 记录从指定的internalkey $key中读取到的字节样本，
   // 大约每 config::kReadBytesPeriod 字节采样一次,
   // 如果可能需要触发新的压缩，则返回 true。
   // REQUIRES: lock is held
@@ -107,6 +112,8 @@ class Version {
   void Ref();
   void Unref();
 
+  // Store in "*inputs" all files in "level" that overlap [begin,end]
+  // 在指定的level中，找到和 [begin, end] 有重合的 fileMetaData
   void GetOverlappingInputs(
       int level,
       const InternalKey* begin,  // nullptr means before all keys
@@ -117,7 +124,7 @@ class Version {
   // some part of [*smallest_user_key,*largest_user_key].
   // smallest_user_key==nullptr represents a key smaller than all the DB's keys.
   // largest_user_key==nullptr represents a key largest than all the DB's keys.
-  // 如果指定 @level 的某些文件和 [*smallest_user_key,*largest_user_key] 有重复，
+  // 如果指定 $level 的某些文件和 [*smallest_user_key,*largest_user_key] 有重复，
   // 则返回 true；smallest_user_key==nullptr 表示 一个比DB中所有的key还小的key，
   // largest_user_key==nullptr 表示 一个比DB中所有的key还大的key
   bool OverlapInLevel(int level, const Slice* smallest_user_key,
@@ -165,6 +172,8 @@ class Version {
   // false, makes no more calls.
   //
   // REQUIRES: user portion of internal_key == user_key.
+  // 从最新到最旧遍历 fileMetaData ，如果 fileMetaData 范围覆盖了 user_key，则调用
+  // func(arg, level, f)
   void ForEachOverlapping(Slice user_key, Slice internal_key, void* arg,
                           bool (*func)(void*, int, FileMetaData*));
 
@@ -178,11 +187,13 @@ class Version {
   // sstable文件列表，files_[0] 第0层的sstable
   std::vector<FileMetaData*> files_[config::kNumLevels];
 
+  // ==Seek触发Compaction
   // Next file to compact based on seek stats.
   // 下一个要compact的文件
   FileMetaData* file_to_compact_;
   int file_to_compact_level_;
 
+  /// ==容量触发Compaction
   // Level that should be compacted next and its compaction score.
   // Score < 1 means compaction is not strictly needed.  These fields
   // are initialized by Finalize().
@@ -194,6 +205,7 @@ class Version {
 
 class VersionSet {
  public:
+  // VersionSet会使用到TableCache，这个是调用者传入的。TableCache用于Get k/v操作
   VersionSet(const std::string& dbname, const Options* options,
              TableCache* table_cache, const InternalKeyComparator*);
   VersionSet(const VersionSet&) = delete;
@@ -206,24 +218,32 @@ class VersionSet {
   // current version.  Will release *mu while actually writing to the file.
   // REQUIRES: *mu is held on entry.
   // REQUIRES: no other thread concurrently calls LogAndApply()
+  // 在current version上应用指定的VersionEdit，生成新的MANIFEST信息，保存到磁盘上，并用作current version
+  // 要求：获得锁 mu
+  // 要求：没有其他线程并发调用LogAndApply()
   Status LogAndApply(VersionEdit* edit, port::Mutex* mu)
       EXCLUSIVE_LOCKS_REQUIRED(mu);
 
   // Recover the last saved descriptor from persistent storage.
+  // 从磁盘恢复最后持久化的元数据信息
   Status Recover(bool* save_manifest);
 
   // Return the current version.
+  // 获取 current_
   Version* current() const { return current_; }
 
   // Return the current manifest file number
+  // 获取 manifest_file_number_
   uint64_t ManifestFileNumber() const { return manifest_file_number_; }
 
   // Allocate and return a new file number
+  // 分配一个fileNum；获取next_file_number_，之后next_file_number_++。
   uint64_t NewFileNumber() { return next_file_number_++; }
 
   // Arrange to reuse "file_number" unless a newer file number has
   // already been allocated.
   // REQUIRES: "file_number" was returned by a call to NewFileNumber().
+  //  重用file_number，必须满足 next_file_number_ == file_number + 1
   void ReuseFileNumber(uint64_t file_number) {
     if (next_file_number_ == file_number + 1) {
       next_file_number_ = file_number;
@@ -234,42 +254,52 @@ class VersionSet {
   int NumLevelFiles(int level) const;
 
   // Return the combined file size of all files at the specified level.
+  // 返回指定level的文件个数 
   int64_t NumLevelBytes(int level) const;
 
   // Return the last sequence number.
+  // 获取 last_sequence_
   uint64_t LastSequence() const { return last_sequence_; }
 
   // Set the last sequence number to s.
+  // 设置 last_sequence_
   void SetLastSequence(uint64_t s) {
     assert(s >= last_sequence_);
     last_sequence_ = s;
   }
 
   // Mark the specified file number as used.
+  // 标记指定的文件编号已经被使用了，内部更新 next_file_number_
   void MarkFileNumberUsed(uint64_t number);
 
   // Return the current log file number.
+  // 返回 log_number_
   uint64_t LogNumber() const { return log_number_; }
 
   // Return the log file number for the log file that is currently
   // being compacted, or zero if there is no such log file.
+  // 返回正在compact的log文件编号，如果没有返回0
   uint64_t PrevLogNumber() const { return prev_log_number_; }
 
   // Pick level and inputs for a new compaction.
   // Returns nullptr if there is no compaction to be done.
   // Otherwise returns a pointer to a heap-allocated object that
   // describes the compaction.  Caller should delete the result.
+  // 
   Compaction* PickCompaction();
 
   // Return a compaction object for compacting the range [begin,end] in
   // the specified level.  Returns nullptr if there is nothing in that
   // level that overlaps the specified range.  Caller should delete
   // the result.
+  // 
   Compaction* CompactRange(int level, const InternalKey* begin,
                            const InternalKey* end);
 
   // Return the maximum overlapping data (in bytes) at next level for any
   // file at a level >= 1.
+  // 对于所有level>0，遍历文件，找到和下一层文件的重叠数据的最大值(in bytes)  
+  // 这个就是Version:: GetOverlappingInputs()函数的简单应用  
   int64_t MaxNextLevelOverlappingBytes();
 
   // Create an iterator that reads over the compaction inputs for "*c".
@@ -277,6 +307,7 @@ class VersionSet {
   Iterator* MakeInputIterator(Compaction* c);
 
   // Returns true iff some level needs a compaction.
+  // 
   bool NeedsCompaction() const {
     Version* v = current_;
     return (v->compaction_score_ >= 1) || (v->file_to_compact_ != nullptr);
@@ -284,10 +315,12 @@ class VersionSet {
 
   // Add all files listed in any live version to *live.
   // May also mutate some internal state.
+  // 
   void AddLiveFiles(std::set<uint64_t>* live);
 
   // Return the approximate offset in the database of the data for
   // "key" as of version "v".
+  // 对于 $v 中的 $key，返回db中的大概位置
   uint64_t ApproximateOffsetOf(Version* v, const InternalKey& key);
 
   // Return a human-readable short (single-line) summary of the number
@@ -305,6 +338,8 @@ class VersionSet {
 
   bool ReuseManifest(const std::string& dscname, const std::string& dscbase);
 
+  // 关键函数
+  // 依照规则为v下次的compaction计算出最适用的level（通过计算compaction_score_），对于level 0和>0需要分别对待
   void Finalize(Version* v);
 
   void GetRange(const std::vector<FileMetaData*>& inputs, InternalKey* smallest,
@@ -319,6 +354,7 @@ class VersionSet {
   // Save current contents to *log
   Status WriteSnapshot(log::Writer* log);
 
+  // 将version v 放入双向链表中，并将 current_ 指向 v
   void AppendVersion(Version* v);
 
   //=== 第一组，直接来自于DBImple，构造函数传入

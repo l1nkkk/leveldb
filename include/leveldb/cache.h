@@ -69,7 +69,6 @@ class LEVELDB_EXPORT Cache {
   // Release a mapping returned by a previous Lookup().
   // REQUIRES: handle must not have been released yet.
   // REQUIRES: handle must have been returned by a method on *this.
-  // 
   // 释放前面Lookup所返回的Handle
   virtual void Release(Handle* handle) = 0;
 

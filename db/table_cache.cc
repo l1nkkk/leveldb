@@ -41,11 +41,17 @@ TableCache::~TableCache() { delete cache_; }
 Status TableCache::FindTable(uint64_t file_number, uint64_t file_size,
                              Cache::Handle** handle) {
   Status s;
+
+  /// 1.将fileNum编码成字符串
   char buf[sizeof(file_number)];
   EncodeFixed64(buf, file_number);
   Slice key(buf, sizeof(buf));
+
+  /// 2. 通过编码后字符串去寻找该 table 文件的缓存，如果找不到，执行进一步操作
   *handle = cache_->Lookup(key);
   if (*handle == nullptr) {
+
+    /// 3. 构造table文件名（包含路径），.ldb
     std::string fname = TableFileName(dbname_, file_number);
     RandomAccessFile* file = nullptr;
     Table* table = nullptr;
@@ -56,6 +62,8 @@ Status TableCache::FindTable(uint64_t file_number, uint64_t file_size,
         s = Status::OK();
       }
     }
+
+    /// 4.打开并解析Table文件
     if (s.ok()) {
       s = Table::Open(options_, file, file_size, &table);
     }
@@ -66,6 +74,7 @@ Status TableCache::FindTable(uint64_t file_number, uint64_t file_size,
       // We do not cache error results so that if the error is transient,
       // or somebody repairs the file, we recover automatically.
     } else {
+      // 5. 生成TableAndFile结构体，并插入LRU缓存
       TableAndFile* tf = new TableAndFile;
       tf->file = file;
       tf->table = table;
@@ -83,11 +92,14 @@ Iterator* TableCache::NewIterator(const ReadOptions& options,
   }
 
   Cache::Handle* handle = nullptr;
+  /// 1. init ，不存在则创建该Table的缓存。调用FindTable，返回cache对象
   Status s = FindTable(file_number, file_size, &handle);
   if (!s.ok()) {
     return NewErrorIterator(s);
   }
 
+  /// 2. 从cache对象中取出Table对象指针，
+  /// 调用其NewIterator返回Iterator对象，并为Iterator注册一个cleanup函数
   Table* table = reinterpret_cast<TableAndFile*>(cache_->Value(handle))->table;
   Iterator* result = table->NewIterator(options);
   result->RegisterCleanup(&UnrefEntry, cache_, handle);
@@ -101,9 +113,11 @@ Status TableCache::Get(const ReadOptions& options, uint64_t file_number,
                        uint64_t file_size, const Slice& k, void* arg,
                        void (*handle_result)(void*, const Slice&,
                                              const Slice&)) {
+  /// 1. 通过FindTable找到对应的Table魂村
   Cache::Handle* handle = nullptr;
   Status s = FindTable(file_number, file_size, &handle);
   if (s.ok()) {
+    // 2. 调用 InternalGet，对查找的 ket-value结果调用用户传入的回调函数 @handle_result 进行处理
     Table* t = reinterpret_cast<TableAndFile*>(cache_->Value(handle))->table;
     s = t->InternalGet(options, k, arg, handle_result);
     cache_->Release(handle);

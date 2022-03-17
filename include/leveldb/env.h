@@ -249,6 +249,7 @@ class LEVELDB_EXPORT SequentialFile {
 };
 
 // A file abstraction for randomly reading the contents of a file.
+// 可随机读的文件抽象对象
 class LEVELDB_EXPORT RandomAccessFile {
  public:
   RandomAccessFile() = default;
