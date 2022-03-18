@@ -25,7 +25,6 @@ struct FileMetaData {
   InternalKey largest;   // Largest internal key served by table
 };
 
-// 存储DB元信息；
 // LevelDB中对Manifest的Decode/Encode是通过类VersionEdit完成的；
 // 当版本间有增量变动时，VersionEdit记录了这种变动；
 class VersionEdit {
@@ -97,18 +96,18 @@ class VersionEdit {
 
   std::string comparator_;        // key comparator名字
   uint64_t log_number_;           // 日志编号
-  uint64_t prev_log_number_;      // 前一个日志编号
+  uint64_t prev_log_number_;      // 前一个op log编号
   uint64_t next_file_number_;     // 下一个文件编号
-  SequenceNumber last_sequence_;  // 上一个seq
+  SequenceNumber last_sequence_;  // 记录的最后一个seq
   bool has_comparator_;           // 是否有comparator
   bool has_log_number_;           // 是否有log_number_
   bool has_prev_log_number_;      // 是否有prev_log_number_
   bool has_next_file_number_;     // 是否有next_file_number_
   bool has_last_sequence_;        // 是否有last_sequence_
 
-  std::vector<std::pair<int, InternalKey>> compact_pointers_;  // compact点
-  DeletedFileSet deleted_files_;                         // 删除文件集合
-  std::vector<std::pair<int, FileMetaData>> new_files_;  // 新文件集合
+  std::vector<std::pair<int, InternalKey>> compact_pointers_;   // compact点
+  DeletedFileSet deleted_files_;                                // 删除文件集合
+  std::vector<std::pair<int, FileMetaData>> new_files_;         // 新文件集合
 };
 
 }  // namespace leveldb

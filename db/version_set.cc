@@ -92,6 +92,7 @@ Version::~Version() {
   }
 }
 
+// 通过二分法，找到overlap $key 的$files索引
 int FindFile(const InternalKeyComparator& icmp,
              const std::vector<FileMetaData*>& files, const Slice& key) {
   uint32_t left = 0;
@@ -256,9 +257,7 @@ static Iterator* GetFileIterator(void* arg, const ReadOptions& options,
     return NewErrorIterator(
         Status::Corruption("FileReader invoked with unexpected value"));
   } else {
-    // file_value是取自于LevelFileNumIterator迭代器的value，
-    // 其value为 <file number, file size> 以Fixed
-    // 8byte的方式压缩成的一个Slice对象
+    /// 解析 file_value，将读取的SSTable对象 dump到TableCache中，并返回其迭代器
     return cache->NewIterator(options, DecodeFixed64(file_value.data()),
                               DecodeFixed64(file_value.data() + 8));
   }
@@ -338,8 +337,7 @@ void Version::ForEachOverlapping(Slice user_key, Slice internal_key, void* arg,
 
   // Search level-0 in order from newest to oldest.
 
-  /// 1. 遍历level-0，查找 key 中userKey范围包含 @user_key 的文件元数据。
-  /// 因为该层次中key是可能重复的，所以每一个 fileMetaData 都被遍历
+  /// 1. 遍历level-0，找到overlap @user_key 的 FileMetaData
   std::vector<FileMetaData*> tmp;
   tmp.reserve(files_[0].size());
   for (uint32_t i = 0; i < files_[0].size(); i++) {
@@ -350,20 +348,18 @@ void Version::ForEachOverlapping(Slice user_key, Slice internal_key, void* arg,
     }
   }
   if (!tmp.empty()) {
-    // 按 file num 从大到小排序，file num 越大，数据越新
+    // 1-1. 将找到的一系列 level-0 FileMetaDatas 按 filenum从大到小排序（从新到旧）
     std::sort(tmp.begin(), tmp.end(), NewestFirst);
-    // 1-1. match key
+    // 1-2. match key，判断是否继续往下查找
     for (uint32_t i = 0; i < tmp.size(); i++) {
       if (!(*func)(arg, 0, tmp[i])) {
         return;
       }
     }
   }
-
-  /// 如果 level 0 中没找到
-
   // Search other levels.
-  /// 2. 遍历 level >= 1 的 fileMetaData，如果某一层找到了，直接return，不再遍历下一层
+  /// 2. 如果 level 0 中没找到，二分检索 level >= 1 的 fileMetaData，
+  /// 找到overlap @user_key 的 FileMetaData，如果某一层的结果成功让 $func 返回false，则return
   for (int level = 1; level < config::kNumLevels; level++) {
     size_t num_files = files_[level].size();
     if (num_files == 0) continue;
@@ -385,6 +381,15 @@ void Version::ForEachOverlapping(Slice user_key, Slice internal_key, void* arg,
   }
 }
 
+/**
+ * @brief 获取对应 key 的 val，如果找到，将其值设置到 value 当中作为输出，并返回OK，否则返回 non-OK 状态；
+ * 
+ * @param options 
+ * @param k in, 待检索的key
+ * @param value out, 检索到的value
+ * @param stats out，seek compaction 机制，如果被设置，那么调用 UpdateStats 进行状态更新
+ * @return Status state.found ? state.s : Status::NotFound(Slice());
+ */
 Status Version::Get(const ReadOptions& options, const LookupKey& k,
                     std::string* value, GetStats* stats) {
   stats->seek_file = nullptr;
@@ -396,8 +401,10 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
     const ReadOptions* options;
     Slice ikey;                    // internal_key
 
+    // ===seek compaction 机制
     // 当Match执行次数>=2次时，记录第一次执行时的 fileMetaData 和 level，
-    // 用于计算触发compact的量，如果某个文件被记录多次，说明多次Seek空，key太散了
+    // 用于更新计算触发compact的量，如果某个文件被记录多次，说明多次Seek到了却Get空，
+    // 可能太散了，需要compact
     FileMetaData* last_file_read;  
     int last_file_read_level;
 
@@ -407,6 +414,17 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
 
     // 返回是否继续下一个文件的搜索；如果 kFound 或 kDeleted 或者 意外错误 返回 false，
     // 其他情况返回 true
+
+    /**
+     * @brief 回调函数，对 overlap saver.user_key 的 FileMetaData 执行该函数，
+     * 将该 FileMetaData 所对应的table 文件导入到缓存，并对saver.user_key进行检索
+     * 
+     * @param arg 存储State*
+     * @param level f 所在的 level
+     * @param f 文件元数据
+     * @return true 
+     * @return false 如果 kFound 或 kDeleted 或者 意外错误 返回 false，kNotFound 返回 true
+     */
     static bool Match(void* arg, int level, FileMetaData* f) {
       State* state = reinterpret_cast<State*>(arg);
 
@@ -543,26 +561,45 @@ void Version::Unref() {
   }
 }
 
+/**
+ * @brief 如果指定 $level 的某些文件 overlap [*smallest_user_key,*largest_user_key] ，
+ * 则返回 true；否则返回true；
+ * 
+ * @param level 
+ * @param smallest_user_key user_key下界
+ * @param largest_user_key user key上界
+ * @return true 存在overlap
+ * @return false  不存在overlap
+ */
 bool Version::OverlapInLevel(int level, const Slice* smallest_user_key,
                              const Slice* largest_user_key) {
   return SomeFileOverlapsRange(vset_->icmp_, (level > 0), files_[level],
                                smallest_user_key, largest_user_key);
 }
 
-
+/**
+ * @brief 给定memtable中key的范围 [smallest_user_key,largest_user_key]，
+ * 返回其应该被落盘到哪个level
+ * 
+ * @param smallest_user_key   MemTable key 范围下界
+ * @param largest_user_key    MemTable key 范围上界
+ * @return int 应该落盘的level
+ */
 int Version::PickLevelForMemTableOutput(const Slice& smallest_user_key,
                                         const Slice& largest_user_key) {
   int level = 0;
 
   if (!OverlapInLevel(0, &smallest_user_key, &largest_user_key)) {
 
-    // 1. 如果level 0 和 [smallest_user_key, largest_user_key] 没有重复
-    // 进行进一步处理
+    // 1. 如果level 0 和 [smallest_user_key, largest_user_key] 没有overlap，
+    // 可以进行进一步处理，尝试落盘到更底层
     // Push to next level if there is no overlap in next level,
     // and the #bytes overlapping in the level after that are limited.
     InternalKey start(smallest_user_key, kMaxSequenceNumber, kValueTypeForSeek);
     InternalKey limit(largest_user_key, 0, static_cast<ValueType>(0));
     std::vector<FileMetaData*> overlaps;
+
+    // kMaxMemCompactLevel 默认为2
     while (level < config::kMaxMemCompactLevel) {
 
       // 1-1. 如果level+1 与 [smallest_user_key, largest_user_key] 有重复，直接break
@@ -570,7 +607,7 @@ int Version::PickLevelForMemTableOutput(const Slice& smallest_user_key,
         break;
       }
 
-      // 1-2. 如果 level + 2 < config::kNumLevels 
+      // 1-2. 如果 level + 2 < config::kNumLevels，判断grandparent的情况
       if (level + 2 < config::kNumLevels) {
         // 在level+2 中，找到和 [start, end] 有重合的 fileMetaData
         // Check that file does not overlap too many grandparent bytes.
@@ -591,7 +628,15 @@ int Version::PickLevelForMemTableOutput(const Slice& smallest_user_key,
   return level;
 }
 
-
+/**
+ * @brief 在指定的level中，找到和 [begin, end] 有重合的 fileMetaData，
+ * 将其 append 到 inputs 中
+ * 
+ * @param level  指定level
+ * @param begin 范围
+ * @param end   范围
+ * @param inputs out, overlap 的 fileMetaData
+ */
 void Version::GetOverlappingInputs(int level, const InternalKey* begin,
                                    const InternalKey* end,
                                    std::vector<FileMetaData*>* inputs) {
@@ -913,6 +958,7 @@ VersionSet::~VersionSet() {
   delete descriptor_file_;
 }
 
+
 void VersionSet::AppendVersion(Version* v) {
   // Make "v" current
   assert(v->refs_ == 0);
@@ -930,7 +976,9 @@ void VersionSet::AppendVersion(Version* v) {
   v->next_->prev_ = v;
 }
 
+
 Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
+  /// 1. 为edit设置log number等4个计数器
   if (edit->has_log_number_) {
     assert(edit->log_number_ >= log_number_);
     assert(edit->log_number_ < next_file_number_);
@@ -944,17 +992,19 @@ Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
 
   edit->SetNextFile(next_file_number_);
   edit->SetLastSequence(last_sequence_);
-
+  /// 2. 创建一个新的Version v，并把新的edit变动保存到v中
   Version* v = new Version(this);
   {
     Builder builder(this, current_);
     builder.Apply(edit);
     builder.SaveTo(v);
   }
-  Finalize(v);
+  Finalize(v); // 为v计算执行compaction的最佳level  
 
   // Initialize new descriptor log file if necessary by creating
   // a temporary file that contains a snapshot of the current version.
+  /// 5. 如果MANIFEST文件指针不存在，就创建并初始化一个新的MANIFEST文件。
+  /// 这只会发生在第一次打开数据库时。这个MANIFEST文件保存了current version的快照
   std::string new_manifest_file;
   Status s;
   if (descriptor_log_ == nullptr) {
@@ -969,6 +1019,8 @@ Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
     }
   }
 
+  /// 4. 向MANIFEST写入一条新的log，记录current version的信息。
+  /// 在文件写操作时unlock锁，写入完成后，再重新lock，以防止浪费在长时间的IO操作上
   // Unlock during expensive MANIFEST log write
   {
     mu->Unlock();
@@ -988,6 +1040,8 @@ Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
 
     // If we just created a new descriptor file, install it by writing a
     // new CURRENT file that points to it.
+    //如果刚才创建了一个MANIFEST文件，通过写一个指向它的CURRENT文件  
+    //安装它；不需要再次检查MANIFEST是否出错，因为如果出错后面会删除它 
     if (s.ok() && !new_manifest_file.empty()) {
       s = SetCurrentFile(env_, dbname_, manifest_file_number_);
     }
@@ -996,6 +1050,7 @@ Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
   }
 
   // Install the new version
+  /// 5. 安装这个新的version
   if (s.ok()) {
     AppendVersion(v);
     log_number_ = edit->log_number_;
