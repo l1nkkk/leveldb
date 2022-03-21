@@ -337,11 +337,12 @@ class VersionSet {
   friend class Compaction;
   friend class Version;
 
+  // 返回是否继续使用当前的 Manifest 文件，可能存在 Manifest 文件过大，需要更换的情况;
+  // 如果可以重用，内部设置 descriptor_log_ 和 manifest_file_number_
   bool ReuseManifest(const std::string& dscname, const std::string& dscbase);
 
-  // 关键函数
-  // 依照规则为v下次的compaction计算出最适用的level（通过计算compaction_score_），对于level
-  // 0和>0需要分别对待
+  // 对于当前版本 v，计算最佳的压缩 level，并计算一个 compaction 分数，
+  // 最终设置 $v 的 compaction_score_ 和  compaction_level_
   void Finalize(Version* v);
 
   void GetRange(const std::vector<FileMetaData*>& inputs, InternalKey* smallest,

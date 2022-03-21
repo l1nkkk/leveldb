@@ -35,6 +35,7 @@ class VersionEdit {
   // 清空信息
   void Clear();
 
+  // 一系列 setxxx 函数
   void SetComparatorName(const Slice& name) {
     has_comparator_ = true;
     comparator_ = name.ToString();
@@ -62,7 +63,7 @@ class VersionEdit {
   // Add the specified file at the specified number.
   // REQUIRES: This version has not been saved (see VersionSet::SaveTo)
   // REQUIRES: "smallest" and "largest" are smallest and largest keys in file
-  // 添加sstable文件信息，要求：DB元信息还没有写入磁盘Manifest文件
+  // 添加sstable文件信息;
   // @level：.sst文件层次；@file 文件编号-用作文件名 @size 文件大小
   // @smallest, @largest：sst文件包含k/v对的最大最小key
   void AddFile(int level, uint64_t file, uint64_t file_size,
@@ -105,9 +106,12 @@ class VersionEdit {
   bool has_next_file_number_;     // 是否有next_file_number_
   bool has_last_sequence_;        // 是否有last_sequence_
 
-  std::vector<std::pair<int, InternalKey>> compact_pointers_;   // compact点
-  DeletedFileSet deleted_files_;                                // 删除文件集合
-  std::vector<std::pair<int, FileMetaData>> new_files_;         // 新文件集合
+  // compact点，<level, internalKey>
+  std::vector<std::pair<int, InternalKey>> compact_pointers_;   
+  // 删除文件集合，<level, fileNum>
+  DeletedFileSet deleted_files_;                                
+  // 新文件集合，<level, FileMetaData>
+  std::vector<std::pair<int, FileMetaData>> new_files_;         
 };
 
 }  // namespace leveldb

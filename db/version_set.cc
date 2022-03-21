@@ -719,11 +719,11 @@ std::string Version::DebugString() const {
 
 // A helper class so we can efficiently apply a whole sequence
 // of edits to a particular state without creating intermediate
-// Versions that contain full copies of the intermediate state.
+// Versions that contain full copies of the intermediate state. 
 class VersionSet::Builder {
  private:
   // Helper to sort by v->files_[file_number].smallest
-  // 比较器：按 smallest 升序排序，如果相等再按 number 升序排序
+  // 比较器：按 smallest 升序排序，如果相等再按 fileNum 升序排序
   // 如果 f1->smallest < f2->smallest，返回true；
   // 如果相等，则 f1->number < f2->number，返回true；
   struct BySmallestKey {
@@ -745,12 +745,13 @@ class VersionSet::Builder {
 
   // 记录添加和删除的文件
   struct LevelState {
-    std::set<uint64_t> deleted_files;
-    FileSet* added_files;
+    std::set<uint64_t> deleted_files; // fileNum
+    FileSet* added_files;             // FileMetaData，by BySmallestKey's order
   };
 
+  // 以下两个成员调用者传入
   VersionSet* vset_;
-  Version* base_;
+  Version* base_;     // 全量版本
 
   // 每层的文件变化状态
   LevelState levels_[config::kNumLevels];
@@ -788,17 +789,17 @@ class VersionSet::Builder {
   }
 
   // Apply all of the edits in *edit to the current state.
-  // 该函数将edit中的修改apply到当前状态中
+  // 该函数将edit中的修改apply到当前Builder和versionSet状态中
   void Apply(const VersionEdit* edit) {
     // Update compaction pointers
-    /// 1. 把edit记录的compaction点apply到当前状态
+    /// 1. 把edit记录的compaction pointer apply到 vset 当前状态上
     for (size_t i = 0; i < edit->compact_pointers_.size(); i++) {
       const int level = edit->compact_pointers_[i].first;
       vset_->compact_pointer_[level] =
           edit->compact_pointers_[i].second.Encode().ToString();
     }
 
-    /// 2. 把edit记录的已删除文件应用到当前状态
+    /// 2. 把edit记录的已删除文件应用到Builder当前状态
     // Delete files
     for (const auto& deleted_file_set_kvp : edit->deleted_files_) {
       const int level = deleted_file_set_kvp.first;
@@ -848,7 +849,7 @@ class VersionSet::Builder {
   }
 
   // Save the current state in *v.
-  // 当前的Builder状态存储到v中返回
+  // 当前的Builder状态存储到version中返回
   void SaveTo(Version* v) {
     BySmallestKey cmp;
     cmp.internal_comparator = &vset_->icmp_;
@@ -910,7 +911,7 @@ class VersionSet::Builder {
     }
   }
 
-  // 尝试将f加入到levels_[level]文件set中;
+  // 尝试将f加入到files_[level]文件set中;
   // 条件1： 文件不能被删除，也就是不能在levels_[level].deleted_files集合中；
   // 条件2：保证文件之间的key是连续的，即基于比较器vset_->icmp_，
   // f的min key要大于levels_[level]集合中最后一个文件的max key
@@ -992,7 +993,8 @@ Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
 
   edit->SetNextFile(next_file_number_);
   edit->SetLastSequence(last_sequence_);
-  /// 2. 创建一个新的Version v，并把新的edit变动保存到v中
+
+  /// 2. 创建一个新的Version v，v_new = current_ + edit
   Version* v = new Version(this);
   {
     Builder builder(this, current_);
@@ -1003,7 +1005,7 @@ Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
 
   // Initialize new descriptor log file if necessary by creating
   // a temporary file that contains a snapshot of the current version.
-  /// 5. 如果MANIFEST文件指针不存在，就创建并初始化一个新的MANIFEST文件。
+  /// 3. 如果MANIFEST文件指针不存在，就创建并初始化一个新的MANIFEST文件。
   /// 这只会发生在第一次打开数据库时。这个MANIFEST文件保存了current version的快照
   std::string new_manifest_file;
   Status s;
@@ -1069,6 +1071,7 @@ Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
   return s;
 }
 
+
 Status VersionSet::Recover(bool* save_manifest) {
   struct LogReporter : public log::Reader::Reporter {
     Status* status;
@@ -1115,17 +1118,23 @@ Status VersionSet::Recover(bool* save_manifest) {
 
   /// 2. 读取MANIFEST内容，MANIFEST是以log的方式写入的，因此这里调用的是log::Reader来读取
   {
+    // Log Reader 相关
     LogReporter reporter;
     reporter.status = &s;
     log::Reader reader(file, &reporter, true /*checksum*/,
                        0 /*initial_offset*/);
+
+    // 承载获取的 log record
     Slice record;
     std::string scratch;
+
     while (reader.ReadRecord(&record, &scratch) && s.ok()) {
       ++read_records;
       VersionEdit edit;
       // 2-1 调用VersionEdit::DecodeFrom，从内容解析出VersionEdit对象
       s = edit.DecodeFrom(record);
+
+      // 2-2 check compactor Name
       if (s.ok()) {
         if (edit.has_comparator_ &&
             edit.comparator_ != icmp_.user_comparator()->Name()) {
@@ -1135,7 +1144,7 @@ Status VersionSet::Recover(bool* save_manifest) {
         }
       }
 
-      /// 2-2 并将VersionEdit apply到versionset中
+      /// 2-3 将VersionEdit apply到versionset和Builder中
       if (s.ok()) {
         builder.Apply(&edit);
       }
@@ -1161,12 +1170,19 @@ Status VersionSet::Recover(bool* save_manifest) {
         last_sequence = edit.last_sequence_;
         have_last_sequence = true;
       }
+
+      // loop
     }
   }
   delete file;
   file = nullptr;
 
+
+
   if (s.ok()) {
+    /// 3. check 下是否读取了nextFile Num、logFile Num、lastSeq
+    // （说明这几个在Manifest文件中必须存在），
+    // 将读取到的log number, prev log number标记为已使用
     if (!have_next_file) {
       s = Status::Corruption("no meta-nextfile entry in descriptor");
     } else if (!have_log_number) {
@@ -1178,20 +1194,20 @@ Status VersionSet::Recover(bool* save_manifest) {
     if (!have_prev_log_number) {
       prev_log_number = 0;
     }
-    /// 3.  将读取到的log number, prev log number标记为已使用
     MarkFileNumberUsed(prev_log_number);
     MarkFileNumberUsed(log_number);
   }
 
-  /// 4. 如果一切顺利就创建新的Version，并应用读取的几个number
+
+  
   if (s.ok()) {
+    /// 4. 创建新的Version，并用前面读取的几个 num 初始化Version的内部数据结构
     Version* v = new Version(this);
 
-    // 将 Builder apply 到 version v中
     builder.SaveTo(v);
     // Install recovered version
     // Finalize(v)和AppendVersion(v)用来安装并使用version v，
-    //在AppendVersion函数中会将current version设置为v
+    // 在AppendVersion函数中会将current version设置为v
     Finalize(v);
     AppendVersion(v);
     manifest_file_number_ = next_file;
@@ -1200,6 +1216,8 @@ Status VersionSet::Recover(bool* save_manifest) {
     log_number_ = log_number;
     prev_log_number_ = prev_log_number;
 
+    /// 5. 判断是否Manifest 文件可重用，如果可重用，
+    /// 设置 descriptor_log_ 和 manifest_file_number_
     // See if we can reuse the existing MANIFEST file.
     if (ReuseManifest(dscname, current)) {
       // No need to save new manifest
@@ -1215,6 +1233,7 @@ Status VersionSet::Recover(bool* save_manifest) {
   return s;
 }
 
+
 bool VersionSet::ReuseManifest(const std::string& dscname,
                                const std::string& dscbase) {
   if (!options_->reuse_logs) {
@@ -1223,6 +1242,7 @@ bool VersionSet::ReuseManifest(const std::string& dscname,
   FileType manifest_type;
   uint64_t manifest_number;
   uint64_t manifest_size;
+  // 1. 如果超过大小，返回false，表示不重用Manifest
   if (!ParseFileName(dscbase, &manifest_number, &manifest_type) ||
       manifest_type != kDescriptorFile ||
       !env_->GetFileSize(dscname, &manifest_size).ok() ||
@@ -1231,6 +1251,8 @@ bool VersionSet::ReuseManifest(const std::string& dscname,
     return false;
   }
 
+
+  // 2. 重用Manifest，并设置VersionSet的状态
   assert(descriptor_file_ == nullptr);
   assert(descriptor_log_ == nullptr);
   Status r = env_->NewAppendableFile(dscname, &descriptor_file_);
@@ -1266,12 +1288,15 @@ void VersionSet::Finalize(Version* v) {
       //
       // (1) With larger write-buffer sizes, it is nice not to do too
       // many level-0 compactions.
+      // 对于较大的写入缓冲区大小，最好不要进行太多的 0 级压缩。
       //
       // (2) The files in level-0 are merged on every read and
       // therefore we wish to avoid too many files when the individual
       // file size is small (perhaps because of a small write-buffer
       // setting, or very high compression ratios, or lots of
       // overwrites/deletions).
+      // level-0 中的文件在每次读取时都会合并，因此我们希望在单个文件较小时
+      // （可能是因为写入缓冲区设置较小，或压缩率非常高，或大量覆盖/删除 ）避免文件过多
       score = v->files_[level].size() /
               static_cast<double>(config::kL0_CompactionTrigger);
     } else {
