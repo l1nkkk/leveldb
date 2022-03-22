@@ -37,6 +37,12 @@ class WriteBatchInternal {
 
   static Status InsertInto(const WriteBatch* batch, MemTable* memtable);
 
+  /**
+   * @brief 将 src 中的 op append 到 dst 中
+   * 
+   * @param dst 目标 Batch
+   * @param src 源 Batch
+   */
   static void Append(WriteBatch* dst, const WriteBatch* src);
 };
 

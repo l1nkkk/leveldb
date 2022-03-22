@@ -11,6 +11,8 @@
 namespace leveldb {
 
 namespace {
+
+// 用于 compact 的迭代器
 class MergingIterator : public Iterator {
  public:
   MergingIterator(const Comparator* comparator, Iterator** children, int n)

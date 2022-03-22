@@ -60,6 +60,7 @@ class LEVELDB_EXPORT WriteBatch {
   //
   // This number is tied to implementation details, and may change across
   // releases. It is intended for LevelDB usage metrics.
+  // Batch引起的数据库更改的大小
   size_t ApproximateSize() const;
 
   // Copies the operations in "source" to this batch.
@@ -67,9 +68,16 @@ class LEVELDB_EXPORT WriteBatch {
   // This runs in O(source size) time. However, the constant factor is better
   // than calling Iterate() over the source batch with a Handler that replicates
   // the operations into this batch.
+  // 将 source 中的操作，copy 到当前batch
   void Append(const WriteBatch& source);
 
   // Support for iterating over the contents of a batch.
+  /**
+   * @brief 对 WriteBatch 迭代apply 到memtable
+   * 
+   * @param handler 
+   * @return Status 
+   */
   Status Iterate(Handler* handler) const;
 
  private:

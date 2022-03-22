@@ -53,6 +53,8 @@ class Reader {
   // "*scratch" as temporary storage.  The contents filled in *record
   // will only be valid until the next mutating operation on this
   // reader or the next mutation to *scratch.
+  // 为什么需要 scratch，因为 record 是引用职责的，并不分配内存，
+  // 因此需要提供一个结构来承载实际读到的 log record
   bool ReadRecord(Slice* record, std::string* scratch);
 
   // Returns the physical offset of the last record returned by ReadRecord.

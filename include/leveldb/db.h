@@ -50,8 +50,14 @@ class LEVELDB_EXPORT DB {
   // OK on success.
   // Stores nullptr in *dbptr and returns a non-OK status on error.
   // Caller should delete *dbptr when it is no longer needed.
-  // 打开一个db，成功返回OK，打开的db指针保存在*dbptr中，
-  // 用完后，调用者需要调用delete *dbptr删除之
+  /**
+   * @brief  打开一个db，成功返回OK打开的db指针保存在*dbptr中，调用者需要负责delete *dbptr
+   * 
+   * @param options 配置
+   * @param name  数据库名（即路径）
+   * @param dbptr  out, 返回的 db 指针
+   * @return Status 
+   */
   static Status Open(const Options& options, const std::string& name,
                      DB** dbptr);
 

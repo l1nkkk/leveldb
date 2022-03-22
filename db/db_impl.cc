@@ -289,6 +289,13 @@ void DBImpl::RemoveObsoleteFiles() {
   mutex_.Lock();
 }
 
+/**
+ * @brief 将 MANIFEST apply 到 edit 中，并且返回是否需要重新创建MANIFEST
+ * 
+ * @param edit        out, 存储 import 的版本信息
+ * @param save_manifest out,MANIFEST 是否需重建
+ * @return Status 
+ */
 Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
   mutex_.AssertHeld();
 
@@ -297,11 +304,13 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
   // may already exist from a previous failed creation attempt.
   env_->CreateDir(dbname_);
   assert(db_lock_ == nullptr);
+  /// 1. 对DB上锁，直到DB结束，上锁失败直接返回
   Status s = env_->LockFile(LockFileName(dbname_), &db_lock_);
   if (!s.ok()) {
     return s;
   }
 
+  /// 2. 如果不存在CURRENT，表明是第一次创建该目录，根据配置决定是报错还是继续执行
   if (!env_->FileExists(CurrentFileName(dbname_))) {
     if (options_.create_if_missing) {
       Log(options_.info_log, "Creating DB %s since it was missing.",
@@ -320,7 +329,9 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
                                      "exists (error_if_exists is true)");
     }
   }
+  
 
+  /// 3. 恢复版本信息
   s = versions_->Recover(save_manifest);
   if (!s.ok()) {
     return s;
@@ -334,25 +345,32 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
   // Note that PrevLogNumber() is no longer used, but we pay
   // attention to it in case we are recovering a database
   // produced by an older version of leveldb.
+  // 4. 正确性检验和 op log 恢复
   const uint64_t min_log = versions_->LogNumber();
   const uint64_t prev_log = versions_->PrevLogNumber();
-  std::vector<std::string> filenames;
+  std::vector<std::string> filenames; // 存储目录下的所有文件名
   s = env_->GetChildren(dbname_, &filenames);
   if (!s.ok()) {
     return s;
   }
+
+
   std::set<uint64_t> expected;
   versions_->AddLiveFiles(&expected);
   uint64_t number;
   FileType type;
-  std::vector<uint64_t> logs;
+  std::vector<uint64_t> logs; // op log 文件的fileNum
   for (size_t i = 0; i < filenames.size(); i++) {
     if (ParseFileName(filenames[i], &number, &type)) {
       expected.erase(number);
+      // 4-1 检查log file 的fileNum，如果log文件的fileNum比MANIFEST文件所有记录的都新
+      // 将其记录起来，后面将该log File 进行恢复
       if (type == kLogFile && ((number >= min_log) || (number == prev_log)))
         logs.push_back(number);
     }
   }
+
+  // 4-2 检查是否有缺失的块文件
   if (!expected.empty()) {
     char buf[50];
     std::snprintf(buf, sizeof(buf), "%d missing files; e.g.",
@@ -360,6 +378,7 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
     return Status::Corruption(buf, TableFileName(dbname_, *(expected.begin())));
   }
 
+  // 4-3 按生成 log file 的顺序 recover，重放log file，注意需要传入 edit
   // Recover in the order in which the logs were generated
   std::sort(logs.begin(), logs.end());
   for (size_t i = 0; i < logs.size(); i++) {
@@ -382,6 +401,16 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
   return Status::OK();
 }
 
+/**
+ * @brief 
+ * 
+ * @param log_number op logFile number
+ * @param last_log  是否是待重放的最后一个logFile
+ * @param save_manifest out, 是否重建Manifest
+ * @param edit        out,版本增量
+ * @param max_sequence out,最大的seq
+ * @return Status 
+ */
 Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
                               bool* save_manifest, VersionEdit* edit,
                               SequenceNumber* max_sequence) {
@@ -400,7 +429,8 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
 
   mutex_.AssertHeld();
 
-  // Open the log file
+  /// 1. Open the log file
+  
   std::string fname = LogFileName(dbname_, log_number);
   SequentialFile* file;
   Status status = env_->NewSequentialFile(fname, &file);
@@ -409,7 +439,7 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
     return status;
   }
 
-  // Create the log reader.
+  // 2. Create the log reader.
   LogReporter reporter;
   reporter.env = env_;
   reporter.info_log = options_.info_log;
@@ -423,18 +453,21 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
   Log(options_.info_log, "Recovering log #%llu",
       (unsigned long long)log_number);
 
-  // Read all the records and add to a memtable
+  /// 3. Read all the records and add to a memtable
   std::string scratch;
   Slice record;
   WriteBatch batch;
   int compactions = 0;
   MemTable* mem = nullptr;
   while (reader.ReadRecord(&record, &scratch) && status.ok()) {
+    // record 的大小小于12则出错，原因是每个record都是一条memtable中的entry
+    // 该entry 最小为 12 字节
     if (record.size() < 12) {
       reporter.Corruption(record.size(),
                           Status::Corruption("log record too small"));
       continue;
     }
+    /// 3-1 将record append 到 batch 中
     WriteBatchInternal::SetContents(&batch, record);
 
     if (mem == nullptr) {
@@ -1507,6 +1540,8 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   // Recover handles create_if_missing, error_if_exists
   bool save_manifest = false;
   Status s = impl->Recover(&edit, &save_manifest);
+
+
   if (s.ok() && impl->mem_ == nullptr) {
     // Create new log and a corresponding memtable.
     uint64_t new_log_number = impl->versions_->NewFileNumber();

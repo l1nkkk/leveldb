@@ -59,7 +59,7 @@ class LEVELDB_EXPORT Table {
   // bytes, and so includes effects like compression of the underlying data.
   // E.g., the approximate offset of the last key in the table will
   // be close to the file length.
-  // 返回根据 key 所定位到的 index block 在SSTable 中的 offset；
+  // 根据 key 返回overlap该key的block所对应的offset；
   // 如果定位不到，则返回  metaIndex block 的BlockHandle的offset；
   uint64_t ApproximateOffsetOf(const Slice& key) const;
 
