@@ -48,12 +48,15 @@ class LEVELDB_EXPORT WriteBatch {
   ~WriteBatch();
 
   // Store the mapping "key->value" in the database.
+  // 往Batch里添加Put操作
   void Put(const Slice& key, const Slice& value);
 
   // If the database contains a mapping for "key", erase it.  Else do nothing.
+  // 往Batch里添加Delete操作
   void Delete(const Slice& key);
 
   // Clear all updates buffered in this batch.
+  // 清楚Batch里的所有操作
   void Clear();
 
   // The size of the database changes caused by this batch.

@@ -11,7 +11,8 @@
 
 namespace leveldb {
 
-// 将前缀中的varInt值摘掉，返回摘掉后的slice
+// 先将 data 前缀中的varInt获取到作为读取长度len，
+// 进一步读取len长度的数据，封装成slice返回
 static Slice GetLengthPrefixedSlice(const char* data) {
   uint32_t len;
   const char* p = data;

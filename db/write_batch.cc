@@ -45,13 +45,17 @@ Status WriteBatch::Iterate(Handler* handler) const {
     return Status::Corruption("malformed WriteBatch (too small)");
   }
 
+  // 1. 将Batch 头除去
   input.remove_prefix(kHeader);
   Slice key, value;
   int found = 0;
+
+  // 2. 解析Batch内容
   while (!input.empty()) {
     found++;
     char tag = input[0];
     input.remove_prefix(1);
+    // 可以推测：batch中一条record的结构为 type | keyLen | Key | ValLen | Val
     switch (tag) {
       case kTypeValue:
         if (GetLengthPrefixedSlice(&input, &key) &&
@@ -113,6 +117,8 @@ void WriteBatch::Append(const WriteBatch& source) {
 }
 
 namespace {
+
+// 负责将 Batch 中的 entries apply 到Memtable
 class MemTableInserter : public WriteBatch::Handler {
  public:
   SequenceNumber sequence_;
@@ -129,12 +135,16 @@ class MemTableInserter : public WriteBatch::Handler {
 };
 }  // namespace
 
+
+
 Status WriteBatchInternal::InsertInto(const WriteBatch* b, MemTable* memtable) {
   MemTableInserter inserter;
   inserter.sequence_ = WriteBatchInternal::Sequence(b);
   inserter.mem_ = memtable;
   return b->Iterate(&inserter);
 }
+
+
 
 void WriteBatchInternal::SetContents(WriteBatch* b, const Slice& contents) {
   assert(contents.size() >= kHeader);

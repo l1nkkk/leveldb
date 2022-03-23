@@ -39,15 +39,18 @@ bool GetVarint32(Slice* input, uint32_t* value);
 
 // 从 input 中的前缀以var64方式解析出 value，在 input 中截断已解析字节
 bool GetVarint64(Slice* input, uint64_t* value);
-// 从 input 中的前缀以var32方式解析出 value 放入 result 中，在 input 中截断已解析字节
+
+// 从 input 中的前缀以var32方式解析出len，再接着读取len chars，
+// 将读取到的 value 放入 result 中，在 input 中截断已解析字节。
+// varLen | value | outputInput
 bool GetLengthPrefixedSlice(Slice* input, Slice* result);
 
 // Pointer-based variants of GetVarint...  These either store a value
 // in *v and return a pointer just past the parsed value, or return
 // nullptr on error.  These routines only look at bytes in the range
 // [p..limit-1]
-// 以 var32 的方式，从[p,limit) 中解析数据，存入 value，
-// 并返回解析后的下一个offset。
+// 以 var32 的方式，从[p,limit) 中解析数据，存入 v 中，
+// 并返回解析后剩下部分的 pointer。
 // suppose return q, then 
 // | p ------ q ------ limit |, 从 p,q 之间的区间解析出 value
 const char* GetVarint32Ptr(const char* p, const char* limit, uint32_t* v);
