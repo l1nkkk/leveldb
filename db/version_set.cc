@@ -977,7 +977,15 @@ void VersionSet::AppendVersion(Version* v) {
   v->next_->prev_ = v;
 }
 
-
+/**
+ * @brief 将指定的VersionEdit apply 到current version上 ；
+ * 如果当前没有MANIFEST文件，则创建MANIFEST文件并写入全量版本信息 curentVersion(首次打开DB时)；
+ * 如果当前存在NANIFEST文件，则将 增量版本信息 edit 追加到文件中
+ * 
+ * @param edit 
+ * @param mu 
+ * @return Status 
+ */
 Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
   /// 1. 为edit设置log number等4个计数器
   if (edit->has_log_number_) {
@@ -1073,6 +1081,13 @@ Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
 }
 
 
+/**
+ * @brief 从磁盘的MANIFEST恢复最后持久化的元数据信息，将其 apply 到 一个新生成的Version中，
+ * 并更新 VersionSet 的状态
+ * 
+ * @param save_manifest 是否需要重新生成一个新的MANIFEST文件 (当current MANIFEST文件太大时需要)
+ * @return Status 
+ */
 Status VersionSet::Recover(bool* save_manifest) {
   struct LogReporter : public log::Reader::Reporter {
     Status* status;
@@ -1202,12 +1217,13 @@ Status VersionSet::Recover(bool* save_manifest) {
 
   
   if (s.ok()) {
-    /// 4. 创建新的Version，并用前面读取的几个 num 初始化Version的内部数据结构
+    /// 4. 创建新的Version v，将builder apply 到 v 中，并将 v append 到双向循环链表，
+    /// 同时调用Finalize计算size compact，并用前面读取的几个 num 初始化Version的内部数据结构
     Version* v = new Version(this);
 
     builder.SaveTo(v);
     // Install recovered version
-    // Finalize(v)和AppendVersion(v)用来安装并使用version v，
+    // 4-1. Finalize(v)和AppendVersion(v)用来安装并使用version v，
     // 在AppendVersion函数中会将current version设置为v
     Finalize(v);
     AppendVersion(v);
@@ -1235,6 +1251,14 @@ Status VersionSet::Recover(bool* save_manifest) {
 }
 
 
+/**
+ * @brief 返回是否继续使用当前的 Manifest 文件，可能存在 Manifest 文件过大，需要更换的情况;
+ * 如果可以重用，内部设置 descriptor_log_ 和 manifest_file_number_
+ * 
+ * @param dscname fileNum
+ * @param dscbase DBName(DBpath too)
+ * @return true 表示可重用，false表示不可重用
+ */
 bool VersionSet::ReuseManifest(const std::string& dscname,
                                const std::string& dscbase) {
   if (!options_->reuse_logs) {
@@ -1269,12 +1293,23 @@ bool VersionSet::ReuseManifest(const std::string& dscname,
   return true;
 }
 
+/**
+ * @brief 标记指定的文件编号已经被使用了，内部更新 next_file_number_
+ * 
+ * @param number 
+ */
 void VersionSet::MarkFileNumberUsed(uint64_t number) {
   if (next_file_number_ <= number) {
     next_file_number_ = number + 1;
   }
 }
 
+/**
+ * @brief 对于当前版本 v，计算最佳的压缩 level，并计算一个 compaction 分数，
+ * 最终设置 $v 的 compaction_score_ 和 compaction_level_
+ * 
+ * @param v 
+ */
 void VersionSet::Finalize(Version* v) {
   // Precomputed best level for next compaction
   int best_level = -1;
