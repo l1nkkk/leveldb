@@ -64,8 +64,8 @@ class VersionEdit {
   // REQUIRES: This version has not been saved (see VersionSet::SaveTo)
   // REQUIRES: "smallest" and "largest" are smallest and largest keys in file
   // 添加sstable文件信息;
-  // @level：.sst文件层次；@file 文件编号-用作文件名 @size 文件大小
-  // @smallest, @largest：sst文件包含k/v对的最大最小key
+  // level：.sst文件层次；@file 文件编号-用作文件名 @size 文件大小
+  // smallest, @largest：sst文件包含k/v对的最大最小key
   void AddFile(int level, uint64_t file, uint64_t file_size,
                const InternalKey& smallest, const InternalKey& largest) {
     FileMetaData f;

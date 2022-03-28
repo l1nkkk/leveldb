@@ -266,6 +266,13 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
   return s;
 }
 
+/**
+ * @brief 据 key 返回overlap该key的block所对应的offset；
+ * 如果定位不到，则返回  metaIndex block 的BlockHandle的offset；
+ * 
+ * @param key 
+ * @return uint64_t 
+ */
 uint64_t Table::ApproximateOffsetOf(const Slice& key) const {
 
   // 1. 将 index iterator 定位到 key（定位data block的索引）

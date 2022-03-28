@@ -28,6 +28,7 @@ class MergingIterator : public Iterator {
 
   ~MergingIterator() override { delete[] children_; }
 
+
   bool Valid() const override { return (current_ != nullptr); }
 
   void SeekToFirst() override {

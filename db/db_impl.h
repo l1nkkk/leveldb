@@ -117,7 +117,17 @@ class DBImpl : public DB {
   void MaybeIgnoreError(Status* s) const;
 
   // Delete any unneeded files and stale in-memory entries.
-  // 删除 不需要的文件 以及 过时的 in-memory entries
+  /**
+   * @brief redo log file，发生在程序Recover的时候，即DB刚启动时，
+   * 这个过程中可能触发 minor compact
+   * 
+   * @param log_number op logFile number
+   * @param last_log  是否是待重放的最后一个logFile
+   * @param save_manifest out, 是否重建Manifest
+   * @param edit        out,版本增量
+   * @param max_sequence out,最大的seq
+   * @return Status 
+   */
   void RemoveObsoleteFiles() EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Compact the in-memory write buffer to disk.  Switches to a new
@@ -130,6 +140,14 @@ class DBImpl : public DB {
                         VersionEdit* edit, SequenceNumber* max_sequence)
       EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
+  /**
+   * @brief 将MemTable 落盘，并更新 edit，同时追加 compactStats 到相应level
+   * 
+   * @param mem 待compact 的 Memtable
+   * @param edit out,记录版本增量
+   * @param base 
+   * @return Status 
+   */
   Status WriteLevel0Table(MemTable* mem, VersionEdit* edit, Version* base)
       EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
@@ -139,8 +157,10 @@ class DBImpl : public DB {
       EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   void RecordBackgroundError(const Status& s);
-
+  // 尝试后台执行调度Compaction任务，其内部回调 BGWork 
   void MaybeScheduleCompaction() EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // 调用 BackgroundCall
   static void BGWork(void* db);
   void BackgroundCall();
   void BackgroundCompaction() EXCLUSIVE_LOCKS_REQUIRED(mutex_);
@@ -168,7 +188,7 @@ class DBImpl : public DB {
   const Options options_;  // options_.comparator == &internal_comparator_
   const bool owns_info_log_;
   const bool owns_cache_;
-  const std::string dbname_;
+  const std::string dbname_;    
 
   // == 第二组，只有两个成员
   // table_cache_ provides its own synchronization
@@ -212,7 +232,7 @@ class DBImpl : public DB {
   // 是否有后台compaction在调度或者运行? 
   bool background_compaction_scheduled_ GUARDED_BY(mutex_);
 
-  // 手动compaction信息  
+  // 手动compaction的信息  
   ManualCompaction* manual_compaction_ GUARDED_BY(mutex_);
 
   // 多版本DB文件，又一个庞然大物

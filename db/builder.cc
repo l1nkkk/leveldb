@@ -14,6 +14,17 @@
 
 namespace leveldb {
 
+/**
+ * @brief 通过 iter 构建sst，并将其落盘
+ * 
+ * @param dbname 数据库名称（路径）
+ * @param env 操作系统相关
+ * @param options 选项
+ * @param table_cache 缓存
+ * @param iter 需要落盘的数据的迭代器
+ * @param meta out, 落盘后的sst文件的文件信息
+ * @return Status 
+ */
 Status BuildTable(const std::string& dbname, Env* env, const Options& options,
                   TableCache* table_cache, Iterator* iter, FileMetaData* meta) {
   Status s;

@@ -220,13 +220,15 @@ class VersionSet {
   // REQUIRES: *mu is held on entry.
   // REQUIRES: no other thread concurrently calls LogAndApply()
   // 在current version上 apply 指定的VersionEdit；如果当前没有MANIFEST文件，
-  // 则创建MANIFEST文件并写入全量版本信息 curentVersion；如果当前存在NANIFEST文件，
-  // 则将 增量版本信息 edit 追加到文件中
+  // 则创建MANIFEST文件并写入全量版本信息
+  // curentVersion；如果当前存在NANIFEST文件， 则将 增量版本信息 edit
+  // 追加到文件中
   Status LogAndApply(VersionEdit* edit, port::Mutex* mu)
       EXCLUSIVE_LOCKS_REQUIRED(mu);
 
   // Recover the last saved descriptor from persistent storage.
-  // 从磁盘恢复最后持久化的元数据信息，save_manifest 返回是否需要重新写一个新的MANIFEST
+  // 从磁盘恢复最后持久化的元数据信息，save_manifest
+  // 返回是否需要重新写一个新的MANIFEST
   Status Recover(bool* save_manifest);
 
   // Return the current version.
@@ -294,7 +296,16 @@ class VersionSet {
   // the specified level.  Returns nullptr if there is nothing in that
   // level that overlaps the specified range.  Caller should delete
   // the result.
-  //
+  /**
+   * @brief 返回针对指定层数的某个范围的文件进行compact的 Compaction对象，
+   * 如果 begin，end
+   * 在当前层数没有overlap到，则返回nullptr，调用者应该负责delete该返回结果
+   *
+   * @param level 指定层数
+   * @param begin 范围
+   * @param end   范围
+   * @return Compaction*
+   */
   Compaction* CompactRange(int level, const InternalKey* begin,
                            const InternalKey* end);
 
@@ -338,8 +349,9 @@ class VersionSet {
   friend class Compaction;
   friend class Version;
 
-  // 返回是否继续使用当前的 Manifest 文件，可能存在 Manifest 文件过大，需要更换的情况;
-  // 如果可以重用，内部设置 descriptor_log_ 和 manifest_file_number_
+  // 返回是否继续使用当前的 Manifest 文件，可能存在 Manifest
+  // 文件过大，需要更换的情况; 如果可以重用，内部设置 descriptor_log_ 和
+  // manifest_file_number_
   bool ReuseManifest(const std::string& dscname, const std::string& dscbase);
 
   // 对于当前版本 v，计算最佳的压缩 level，并计算一个 compaction 分数，
@@ -353,7 +365,6 @@ class VersionSet {
                  const std::vector<FileMetaData*>& inputs2,
                  InternalKey* smallest, InternalKey* largest);
 
-  
   void SetupOtherInputs(Compaction* c);
 
   // Save current contents to *log
@@ -374,9 +385,10 @@ class VersionSet {
   //=== 第二组，db元信息相关
   uint64_t next_file_number_;      // 下一个op log文件编号
   uint64_t manifest_file_number_;  // 当前的manifest文件编号
-  uint64_t last_sequence_;        // 当前的seq，用于构造 internalKey
-  uint64_t log_number_;       // log编号
-  uint64_t prev_log_number_;  // 前一个op log文件编号，0 or backing store for memtable being compacted
+  uint64_t last_sequence_;         // 当前的seq，用于构造 internalKey
+  uint64_t log_number_;            // log编号
+  uint64_t prev_log_number_;  // 前一个op log文件编号，0 or backing store for
+                              // memtable being compacted
 
   // Opened lazily
   //=== 第三组，menifest文件相关
@@ -418,7 +430,7 @@ class Compaction {
   FileMetaData* input(int which, int i) const { return inputs_[which][i]; }
 
   // Maximum size of files to build during this compaction.
-  // 本次压缩产生的最大文件大小
+  // compact 输出文件所在层次所允许的单个文件最大大小
   uint64_t MaxOutputFileSize() const { return max_output_file_size_; }
 
   // Is this a trivial compaction that can be implemented by just
@@ -433,13 +445,12 @@ class Compaction {
   // Returns true if the information we have available guarantees that
   // the compaction is producing data in "level+1" for which no data exists
   // in levels greater than "level+1".
-  // 如果确定compact后文件落盘到level_+1，该函数判断时候在level_+2及其以后的层里，
+  // 如果确定compact后文件落盘到level_+1，该函数判断在level_+2及其以后的层里，
   // 是否存在overlap $userKey 的sstable文件
   bool IsBaseLevelForKey(const Slice& user_key);
 
   // Returns true iff we should stop building the current output
   // before processing "internal_key".
-  // 
   bool ShouldStopBefore(const Slice& internal_key);
 
   // Release the input version for the compaction, once the compaction
@@ -453,20 +464,22 @@ class Compaction {
 
   Compaction(const Options* options, int level);
 
-  int level_;                       // 待compact层次
-  uint64_t max_output_file_size_;   // compact 输出文件所在层次所允许的最大总文件大小
-  Version* input_version_;          // 待 compact 的Version
-  VersionEdit edit_;                // compact 产生的版本增量
+  int level_;  // 待compact层次
+  uint64_t max_output_file_size_;  // compact 输出文件所在层次所允许的单个文件最大大小
+  Version* input_version_;  // 待 compact 的Version
+  VersionEdit edit_;        // compact 产生的版本增量
 
   // Each compaction reads inputs from "level_" and "level_+1"
-  // level_和level_1中需要compact的 table 文件对应的 FileMetaData
+  // level_和level_+1中需要compact的 sst 文件对应的 FileMetaData
   std::vector<FileMetaData*> inputs_[2];  // The two sets of inputs
 
   // State used to check for number of overlapping grandparent files
   // (parent == level_ + 1, grandparent == level_ + 2)
-  // 用于 check 和grandparent overlap 的文件数量，太大的话怎么办
+  // 在VersionSet::SetupOtherInputs中被设置，用于 check 和grandparent overlap
+  // 的文件数量，太大的话怎么办?
   std::vector<FileMetaData*> grandparents_;
-  
+
+  // 用于 ShouldStopBefore 中
   size_t grandparent_index_;  // Index in grandparent_starts_
   bool seen_key_;             // Some output key has been seen
   int64_t overlapped_bytes_;  // Bytes of overlap between current output

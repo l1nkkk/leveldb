@@ -38,12 +38,12 @@ struct TableBuilder::Rep {
   Options options;              // data block的选项
   Options index_block_options;  // index block的选项
   WritableFile* file;           // sstable文件io对象
-  uint64_t offset;              // 要写入data block在sstable文件中的偏移，初始0
+  uint64_t offset;              // 下一个要写入block(包括metaData block 、footer 等等)在sstable文件中的偏移，初始0。Finish之后表示sst文件大小
   Status status;                // 当前状态，初始ok
   BlockBuilder data_block;      // 当前操作的data block
   BlockBuilder index_block;     // sstable的index block
   std::string last_key;         // 当前data block最后的k/v对的key
-  int64_t num_entries;          // 当前data block的个数，初始0
+  int64_t num_entries;          // 当前 Table 中entries数
   bool closed;  // Either Finish() or Abandon() has been called.
   FilterBlockBuilder* filter_block;
 
