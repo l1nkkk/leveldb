@@ -1231,6 +1231,12 @@ struct IterState {
       : mu(mutex), version(version), mem(mem), imm(imm) {}
 };
 
+/**
+ * @brief delete Merging Iterator 时的回调
+ * 
+ * @param arg1 
+ * @param arg2 
+ */
 static void CleanupIteratorState(void* arg1, void* arg2) {
   IterState* state = reinterpret_cast<IterState*>(arg1);
   state->mu->Lock();
@@ -1273,9 +1279,11 @@ Iterator* DBImpl::NewInternalIterator(const ReadOptions& options,
       NewMergingIterator(&internal_comparator_, &list[0], list.size());
   versions_->current()->Ref();
 
+  /// 3. 生成迭代器回收回调函数
   IterState* cleanup = new IterState(&mutex_, mem_, imm_, versions_->current());
   internal_iter->RegisterCleanup(CleanupIteratorState, cleanup, nullptr);
 
+  /// 4. 更新随机数种子
   *seed = ++seed_;
   mutex_.Unlock();
   return internal_iter;
@@ -1359,7 +1367,7 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
 }
 
 /**
- * @brief 创建一个可以用于迭代DB的iterator
+ * @brief 创建一个可以用于顺序访问DB的iterator
  * 
  * @param options 
  * @return Iterator* 
@@ -1367,7 +1375,12 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
 Iterator* DBImpl::NewIterator(const ReadOptions& options) {
   SequenceNumber latest_snapshot;
   uint32_t seed;
+  // 1. 先将当前 mem immem sstable, 构建成一个mergeIterator
   Iterator* iter = NewInternalIterator(options, &latest_snapshot, &seed);
+
+  // 2. 对该 mergeIterator 进行包装
+  // 2.1 以当前的 seq 为snapshot or 用户自己传入
+  // 2.2 注意seed，随机数种子
   return NewDBIterator(this, user_comparator(), iter,
                        (options.snapshot != nullptr
                             ? static_cast<const SnapshotImpl*>(options.snapshot)
@@ -1402,6 +1415,9 @@ Status DBImpl::Delete(const WriteOptions& options, const Slice& key) {
   return DB::Delete(options, key);
 }
 
+
+// https://www.ravenxrz.ink/archives/d753e372.html
+
 Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   Writer w(&mutex_);
   w.batch = updates;
@@ -1409,6 +1425,8 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   w.done = false;
 
   MutexLock l(&mutex_);
+
+  // 1. 加入写队列，如果此时写队列对头不是本次写事件，条件变量阻塞等待唤醒
   writers_.push_back(&w);
   while (!w.done && &w != writers_.front()) {
     w.cv.Wait();
@@ -1418,6 +1436,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   }
 
   // May temporarily unlock and wait.
+  // 2. 首先要有空余空间来写入，不能让 level-0 太满，也不能让 memtable 太大
   Status status = MakeRoomForWrite(updates == nullptr);
   uint64_t last_sequence = versions_->LastSequence();
   Writer* last_writer = &w;
@@ -1432,15 +1451,18 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
     // into mem_.
     {
       mutex_.Unlock();
+      // 3. wal
       status = log_->AddRecord(WriteBatchInternal::Contents(write_batch));
       bool sync_error = false;
       if (status.ok() && options.sync) {
+        // 3-1. 如果是sync模式，需要落盘
         status = logfile_->Sync();
         if (!status.ok()) {
           sync_error = true;
         }
       }
       if (status.ok()) {
+        // 4. add to memtable，该函数用到了 seq
         status = WriteBatchInternal::InsertInto(write_batch, mem_);
       }
       mutex_.Lock();
@@ -1453,6 +1475,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
     }
     if (write_batch == tmp_batch_) tmp_batch_->Clear();
 
+    // 5. 更新versions的sequence number，体现了该函数为什么要这么设计
     versions_->SetLastSequence(last_sequence);
   }
 
@@ -1468,6 +1491,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   }
 
   // Notify new head of write queue
+  // 唤醒新的Writer来写
   if (!writers_.empty()) {
     writers_.front()->cv.Signal();
   }
@@ -1545,6 +1569,7 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       // individual write by 1ms to reduce latency variance.  Also,
       // this delay hands over some CPU to the compaction thread in
       // case it is sharing the same core as the writer.
+      // 1. 让写延迟1ms， 休眠期间，让出cpu给compaction thread
       mutex_.Unlock();
       env_->SleepForMicroseconds(1000);
       allow_delay = false;  // Do not delay a single write more than once
@@ -1552,17 +1577,21 @@ Status DBImpl::MakeRoomForWrite(bool force) {
     } else if (!force &&
                (mem_->ApproximateMemoryUsage() <= options_.write_buffer_size)) {
       // There is room in current memtable
+      // 2. 当前有足够的空间，可以进行写
       break;
     } else if (imm_ != nullptr) {
       // We have filled up the current memtable, but the previous
       // one is still being compacted, so we wait.
+      // 当前有 imm_，正在进行minor compaction，暂停写操作，等待唤醒
       Log(options_.info_log, "Current memtable full; waiting...\n");
       background_work_finished_signal_.Wait();
     } else if (versions_->NumLevelFiles(0) >= config::kL0_StopWritesTrigger) {
       // There are too many level-0 files.
+      // 3. 太多level-0的文件了。暂停写操作，等待唤醒
       Log(options_.info_log, "Too many L0 files; waiting...\n");
       background_work_finished_signal_.Wait();
     } else {
+      // 4. 说明 memtable 太大，需要将其切换为 imMemtable，进行 minor compaction
       // Attempt to switch to a new memtable and trigger compaction of old
       assert(versions_->PrevLogNumber() == 0);
       uint64_t new_log_number = versions_->NewFileNumber();
@@ -1673,6 +1702,7 @@ void DBImpl::GetApproximateSizes(const Range* range, int n, uint64_t* sizes) {
 
 // Default implementations of convenience methods that subclasses of DB
 // can call if they wish
+// 模板模式呀，秀
 Status DB::Put(const WriteOptions& opt, const Slice& key, const Slice& value) {
   WriteBatch batch;
   batch.Put(key, value);

@@ -508,6 +508,13 @@ bool Version::UpdateStats(const GetStats& stats) {
   return false;
 }
 
+/**
+ * @brief 处理scan模式（迭代器）的 seek compact 机制的参数更新
+ * 
+ * @param internal_key 
+ * @return true 
+ * @return false 
+ */
 bool Version::RecordReadSample(Slice internal_key) {
   ParsedInternalKey ikey;
   if (!ParseInternalKey(internal_key, &ikey)) {
@@ -534,6 +541,10 @@ bool Version::RecordReadSample(Slice internal_key) {
 
   State state;
   state.matches = 0;
+
+  // 从最新到最旧检索 fileMetaData ，使得 fileMetaData 范围覆盖了 user_key，
+  // 对检索到的fileMetaData 调用func(arg, level, f)，如果 func
+  // 返回fasle，则return，不再继续检索
   ForEachOverlapping(ikey.user_key, internal_key, &state, &State::Match);
 
   // Must have at least two matches since we want to merge across
@@ -830,7 +841,7 @@ class VersionSet::Builder {
       // of data before triggering a compaction.
       // 我们有点保守，在触发压缩之前允许大约每 16KB 的数据进行一次搜索。
       // 1 次 1MB seek <===> 40KB compaction
-      // 保守估计 1次seek <===> 16KB compaction
+      // 保守估计 1次seek <===> 16KB compaction 允许每16KB被无效Seek一次
       // 所以设置这样的一种机制：allowed_seeks * 16KB <= Table 文件大小，
       // 即 f->allowed_seeks = static_cast<int>((f->file_size / 16384U));
       // 如果超过该设置的阈值，就将该 Table 文件 compact。

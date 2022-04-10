@@ -117,17 +117,6 @@ class DBImpl : public DB {
   void MaybeIgnoreError(Status* s) const;
 
   // Delete any unneeded files and stale in-memory entries.
-  /**
-   * @brief redo log file，发生在程序Recover的时候，即DB刚启动时，
-   * 这个过程中可能触发 minor compact
-   * 
-   * @param log_number op logFile number
-   * @param last_log  是否是待重放的最后一个logFile
-   * @param save_manifest out, 是否重建Manifest
-   * @param edit        out,版本增量
-   * @param max_sequence out,最大的seq
-   * @return Status 
-   */
   void RemoveObsoleteFiles() EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Compact the in-memory write buffer to disk.  Switches to a new
